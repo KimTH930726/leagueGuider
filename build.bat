@@ -27,6 +27,7 @@ echo [1/3] PyInstaller 빌드 중... (수분 소요)
 pyinstaller ^
   --onedir ^
   --name "AI리그로컬탐색기" ^
+  --add-data "main.py;." ^
   --add-data "config;config" ^
   --add-data "app;app" ^
   --add-data "data\models;data\models" ^

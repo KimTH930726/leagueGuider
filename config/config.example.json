@@ -21,7 +21,7 @@
   "llm_api_key": "",
 
   "_inhouse_comment": "llm_provider=inhouse 시 사용 (DevX MCP API)",
-  "inhouse_llm_url": "https://devx-mcp.internal/api/v1/chat",
+  "inhouse_llm_url": "https://devx-mcp-api.shinsegae-inc.com/api/v1/mcp-command/chat",
   "inhouse_llm_api_key": "",
   "inhouse_llm_usecase_id": "",
   "inhouse_llm_project_id": "",

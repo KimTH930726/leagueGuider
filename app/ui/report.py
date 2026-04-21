@@ -72,7 +72,7 @@ def _report_progress_fragment() -> None:
     from app.ui._helpers import render_progress_bar
     render_progress_bar(
         pct, f"{period_label} 리포트 생성 중",
-        sublabel=f"LLM이 분석 중입니다 · {int(elapsed)}초 경과 · 탭을 이동해도 계속 진행됩니다",
+        sublabel=f"LLM이 분석 중입니다 · {int(elapsed)}초 경과 · 생성이 완료되면 이 탭으로 돌아오세요",
         color="orange",
     )
 
@@ -98,19 +98,7 @@ def render_report(config: AppConfig) -> None:
             disabled=is_reporting,
         )
 
-    period_options = _build_period_options(report_type, config.db_path)
-    with col_period:
-        if not period_options:
-            st.warning("문서가 없습니다. 현행화를 먼저 실행하세요.")
-            selected_period = None
-        else:
-            selected_period = st.selectbox(
-                "기간",
-                options=list(period_options.keys()),
-                format_func=lambda k: period_options[k],
-                disabled=is_reporting,
-            )
-
+    # 관점을 먼저 렌더링해야 perspective 변수가 확정됨
     with col_persp:
         perspective = st.radio(
             "관점",
@@ -127,15 +115,59 @@ def render_report(config: AppConfig) -> None:
             ),
         )
 
-    col_btn, col_regen = st.columns([1, 1])
+    period_options = _build_period_options(report_type, config.db_path)
+
+    # 저장된 리포트가 있는 period_key 셋 — perspective 확정 후 계산
+    _saved_periods: set[str] = set()
+    try:
+        from app.infrastructure.db.connection import db_session as _dbs2
+        with _dbs2(config.db_path) as _c:
+            for _row in _c.execute(
+                "SELECT period_key FROM reports WHERE report_type=? AND period_key LIKE ?",
+                (report_type, f"%:{perspective}"),
+            ).fetchall():
+                _saved_periods.add(_row[0].removesuffix(f":{perspective}"))
+    except Exception:
+        pass
+
+    with col_period:
+        if not period_options:
+            st.warning("문서가 없습니다. 현행화를 먼저 실행하세요.")
+            selected_period = None
+        else:
+            selected_period = st.selectbox(
+                "기간",
+                options=list(period_options.keys()),
+                format_func=lambda k: ("[작성완료] " + period_options[k]) if k in _saved_periods else period_options[k],
+                disabled=is_reporting,
+            )
+
+    # ── 저장된 리포트 존재 여부 배지 ────────────────────────────────────
+    if selected_period and not is_reporting:
+        from app.infrastructure.db.report_repository import ReportRepository as _RR
+        _db_key = f"{selected_period}:{perspective}"
+        _existing = _RR(config.db_path).get_by_period_key(_db_key)
+        _period_label = period_options.get(selected_period, selected_period)
+        _persp_label = PERSPECTIVES[perspective][0]
+        if _existing:
+            _created = (_existing.get("created_at") or "")[:16].replace("T", " ")
+            st.success(f"**{_period_label} [{_persp_label}]** 리포트가 {_created}에 작성되어 있습니다. 조회 버튼으로 즉시 확인할 수 있습니다.")
+        else:
+            st.info(f"**{_period_label} [{_persp_label}]** 리포트가 아직 작성되지 않았습니다. 조회 클릭 시 AI가 자동으로 작성합니다.")
+
+    col_btn, col_desc1, col_regen, col_desc2 = st.columns([1, 2, 1, 2])
     with col_btn:
         load_clicked = st.button("조회", width='stretch', disabled=is_reporting)
+    with col_desc1:
+        st.caption("저장된 리포트가 있으면 즉시 조회합니다. 없으면 AI가 자동으로 생성합니다.")
     with col_regen:
         regen_clicked = st.button(
             "생성 중..." if is_reporting else "재생성 ↺",
             width='stretch',
             disabled=is_reporting,
         )
+    with col_desc2:
+        st.caption("기존 리포트가 있어도 AI가 최신 내용으로 다시 생성합니다.")
 
     # ── 버튼 클릭: 백그라운드 스레드 시작 ───────────────────────────────
     if (load_clicked or regen_clicked) and not is_reporting:
@@ -178,7 +210,7 @@ def render_report(config: AppConfig) -> None:
         return
 
     # ── 기본: 저장된 리포트 목록 ────────────────────────────────────────
-    _show_report_list(config, report_type, perspective)
+    _show_report_list(config, report_type, perspective, selected_period)
 
 
 def _render_report_detail(report: dict) -> None:
@@ -214,7 +246,7 @@ def _render_report_detail(report: dict) -> None:
         st.info("내용이 없습니다. 재생성 버튼을 눌러주세요.")
 
 
-def _show_report_list(config: AppConfig, report_type: str, perspective: str) -> None:
+def _show_report_list(config: AppConfig, report_type: str, perspective: str, selected_period: str | None = None) -> None:
     repo = ReportRepository(config.db_path)
     reports = repo.get_by_type(report_type, perspective)
     label = "월간" if report_type == "monthly" else "주간"
@@ -237,12 +269,13 @@ def _show_report_list(config: AppConfig, report_type: str, perspective: str) -> 
     for r in page_reports:
         period_key = r.get("_period_key") or r["period_key"].split(":")[0]
         created = (r.get("created_at") or "")[:16].replace("T", " ")
+        is_selected = (period_key == selected_period)
         title = (
-            f"{period_key}  "
+            f"{'► ' if is_selected else ''}{period_key}  "
             f"({r['period_start'][:10]} ~ {r['period_end'][:10]})  "
             f"—  {r.get('based_on_document_count', 0)}건  |  생성: {created}"
         )
-        with st.expander(title):
+        with st.expander(title, expanded=is_selected):
             summary = r.get("summary_text") or ""
             if summary:
                 lbl = "월간" if r["report_type"] == "monthly" else "주간"

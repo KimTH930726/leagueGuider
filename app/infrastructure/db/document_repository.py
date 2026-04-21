@@ -1,5 +1,8 @@
 from typing import Optional
 from app.infrastructure.db.connection import db_session
+from app.shared.logger import get_logger
+
+logger = get_logger()
 
 
 class DocumentRepository:
@@ -58,8 +61,8 @@ class DocumentRepository:
                         "INSERT INTO documents_fts(rowid, title, cleaned_body) VALUES(?, ?, ?)",
                         (doc_id, doc.get("title", ""), doc.get("cleaned_body", "")),
                     )
-                except Exception:
-                    pass  # FTS 갱신 실패는 검색 품질 저하지만 치명적이지 않음
+                except Exception as _fts_err:
+                    logger.warning(f"FTS5 갱신 실패 (검색 품질 저하 가능): {_fts_err}")
 
             return doc_id
 

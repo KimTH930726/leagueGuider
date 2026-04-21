@@ -154,6 +154,9 @@ class SyncService:
                 notify("변경 없음 — 이력 저장 생략")
                 return result
 
+            # 루프 진입 전에 이력 레코드 생성 → 중간 실패 시에도 failed 상태로 기록 가능
+            sync_id = self.sync_repo.create(sync_type)
+
             for idx, page_id in enumerate(to_process, 1):
                 page = remote_map[page_id]
                 notify(f"[{idx}/{total}] {page.title}")
@@ -207,8 +210,6 @@ class SyncService:
                 self.vector_store.delete_by_document_id(doc_id)
                 result["deleted_count"] += 1
 
-            # 실제 변경이 있을 때만 이력 저장
-            sync_id = self.sync_repo.create(sync_type)
             notify("동기화 완료")
             self.sync_repo.finish(sync_id, "success", result)
 

@@ -13,8 +13,11 @@ from pathlib import Path
 
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys.executable).parent
+    # PyInstaller --onedir: data files land in _MEIPASS (_internal/)
+    _DATA_DIR = Path(sys._MEIPASS)
 else:
     BASE_DIR = Path(__file__).parent
+    _DATA_DIR = BASE_DIR
 
 os.chdir(BASE_DIR)
 sys.path.insert(0, str(BASE_DIR))
@@ -47,11 +50,12 @@ if __name__ == "__main__":
     sys.argv = [
         "streamlit",
         "run",
-        str(BASE_DIR / "main.py"),
+        str(_DATA_DIR / "main.py"),
         f"--server.port={port}",
         "--server.headless=true",
         "--server.fileWatcherType=none",
         "--browser.gatherUsageStats=false",
         "--browser.serverAddress=localhost",
+        "--global.developmentMode=false",
     ]
     sys.exit(stcli.main())

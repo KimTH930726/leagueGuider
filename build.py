@@ -45,6 +45,7 @@ def main() -> None:
         sys.executable, "-m", "PyInstaller",
         "--onedir",
         f"--name={APP_NAME}",
+        f"--add-data=main.py{s}.",
         f"--add-data=config{s}config",
         f"--add-data=app{s}app",
         f"--add-data=data/models{s}data/models",

@@ -696,7 +696,10 @@ class ReportService:
             w, y = int(week) - 1, int(year)
             if w < 1:
                 y -= 1
-                w = 52
+                # 전년도 마지막 ISO 주차를 정확히 계산 (52 또는 53)
+                import datetime as _dt
+                dec28 = _dt.date(y, 12, 28)  # 12/28은 항상 해당 연도의 마지막 주에 속함
+                w = int(dec28.strftime("%W"))
             return f"{y}-W{w:02d}"
         else:
             year, month = period_key.split("-")
@@ -722,12 +725,18 @@ class ReportService:
     def _resolve_period(report_type: str, period_key: str) -> tuple[str, str]:
         if report_type == "weekly":
             year, week = period_key.split("-W")
-            if int(week) == 0:
+            w_int = int(week)
+            if w_int == 0:
                 # W00: strptime이 ValueError 없이 전년도 말일 반환하므로 명시적 분기
                 monday = datetime(int(year), 1, 1)
             else:
                 try:
-                    monday = datetime.strptime(f"{year}-W{int(week):02d}-1", "%Y-W%W-%w")
+                    monday = datetime.strptime(f"{year}-W{w_int:02d}-1", "%Y-W%W-%w")
+                    # 파싱 결과가 다른 연도를 반환하면 (W53 등 경계값) 해당 연도 마지막 월요일로 보정
+                    if monday.year != int(year):
+                        monday = datetime(int(year), 12, 28) - timedelta(
+                            days=datetime(int(year), 12, 28).weekday()
+                        )
                 except ValueError:
                     monday = datetime(int(year), 1, 1)
             sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)

@@ -189,20 +189,21 @@ def render_dashboard(config: AppConfig, on_sync_click=None) -> None:
         )
         if st.button("⚙️ 설정 → 전체 재색인으로 이동", key="go_rebuild"):
             st.session_state["_settings_highlight_rebuild"] = True
-            # JS로 메인 탭 "⚙️ 설정" 클릭 → Streamlit 리런 → settings.py에서 고급 탭 클릭
+            import time as _time
             import streamlit.components.v1 as _comp
             _comp.html(
-                """<script>
-                (() => {
+                f"""<script>
+                // ts={_time.time()}
+                (() => {{
                     const tabs = window.parent.document
                         .querySelectorAll('[data-baseweb="tab"]');
-                    for (const t of tabs) {
+                    for (const t of tabs) {{
                         if (t.innerText.includes('⚙') ||
-                            t.innerText.includes('설정')) {
+                            t.innerText.includes('설정')) {{
                             t.click(); break;
-                        }
-                    }
-                })();
+                        }}
+                    }}
+                }})();
                 </script>""",
                 height=0,
             )
@@ -342,6 +343,8 @@ def render_dashboard(config: AppConfig, on_sync_click=None) -> None:
         ]
         df.columns = ["유형", "시작", "상태", "신규", "수정", "삭제"]
         df["시작"] = df["시작"].str[:16].str.replace("T", " ", regex=False)
+        _status_map = {"success": "완료", "failed": "실패", "running": "진행중"}
+        df["상태"] = df["상태"].map(lambda s: _status_map.get(s, s))
         st.dataframe(df, width='stretch', hide_index=True)
 
         # 페이징 — 테이블 아래 중앙 정렬

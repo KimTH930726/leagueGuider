@@ -85,74 +85,77 @@ def _advanced_section_fragment(config: AppConfig) -> None:
         or st.session_state.get("is_manual_sync_running", False)
     )
 
-    # ── 버튼 영역 ─────────────────────────────────────────────────────
-    col_btn, col_info = st.columns([2, 3])
-    with col_info:
-        try:
-            from app.infrastructure.db.connection import db_session as _dbs
-            with _dbs(config.db_path) as _conn:
-                fallback_cnt = _conn.execute(
-                    "SELECT COUNT(*) FROM document_metadata "
-                    "WHERE COALESCE(category,'') != '추출불가' "
-                    "AND ((tech_stack_json IN ('[]','','null') OR tech_stack_json IS NULL) "
-                    "OR (problem IS NULL OR problem = '') "
-                    "OR (category IS NULL OR category = '기타'))"
-                ).fetchone()[0]
-                blocked_cnt = _conn.execute(
-                    "SELECT COUNT(*) FROM document_metadata WHERE category = '추출불가'"
-                ).fetchone()[0]
-                total_cnt = _conn.execute(
-                    "SELECT COUNT(*) FROM documents WHERE is_deleted = 0"
-                ).fetchone()[0]
-            st.session_state["_advanced_total_docs"] = total_cnt
-            msgs = []
-            if fallback_cnt > 0:
-                msgs.append(f"⚠️ 메타 미추출 **{fallback_cnt}건**")
-            if blocked_cnt > 0:
-                msgs.append(f"🚫 추출불가(LLM 거부, 정비 시 재시도) **{blocked_cnt}건**")
-            if msgs:
-                st.warning(" · ".join(msgs) + f"  /  전체 {total_cnt}건")
-            else:
-                st.success(f"✅ 전체 {total_cnt}건 메타데이터 정상")
-        except Exception:
-            pass
-
-    with col_btn:
-        btn_disabled = not config.is_llm_configured or is_advanced or is_sync_busy
-
-        def _start_job(mode: str) -> None:
-            if is_sync_busy:
-                st.warning("현행화가 진행 중입니다. 완료 후 데이터 정비를 실행하세요.")
-                return
-            if not config.is_llm_configured:
-                st.error("LLM 설정을 먼저 완료해주세요. (설정 탭 → LLM)")
-                return
-            future = _advanced_executor.submit(_advanced_job, config, mode)
-            st.session_state["is_advanced_running"] = True
-            st.session_state["ss_advanced_start_time"] = time.monotonic()
-            st.session_state["_advanced_future"] = future
-            st.session_state["_advanced_mode"] = mode
-            st.session_state.pop("_advanced_result", None)
-            st.session_state.pop("_advanced_error", None)
-
-        if is_advanced:
-            st.button("진행 중...", type="primary", width="stretch", disabled=True)
+    # ── 상태 표시 ─────────────────────────────────────────────────────
+    try:
+        from app.infrastructure.db.connection import db_session as _dbs
+        with _dbs(config.db_path) as _conn:
+            fallback_cnt = _conn.execute(
+                "SELECT COUNT(*) FROM document_metadata "
+                "WHERE COALESCE(category,'') != '추출불가' "
+                "AND ((tech_stack_json IN ('[]','','null') OR tech_stack_json IS NULL) "
+                "OR (problem IS NULL OR problem = '') "
+                "OR (category IS NULL OR category = '기타'))"
+            ).fetchone()[0]
+            blocked_cnt = _conn.execute(
+                "SELECT COUNT(*) FROM document_metadata WHERE category = '추출불가'"
+            ).fetchone()[0]
+            total_cnt = _conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE is_deleted = 0"
+            ).fetchone()[0]
+        st.session_state["_advanced_total_docs"] = total_cnt
+        msgs = []
+        if fallback_cnt > 0:
+            msgs.append(f"⚠️ 메타 미추출 **{fallback_cnt}건**")
+        if blocked_cnt > 0:
+            msgs.append(f"🚫 추출불가(LLM 거부, 정비 시 재시도) **{blocked_cnt}건**")
+        if msgs:
+            st.warning(" · ".join(msgs) + f"  /  전체 {total_cnt}건")
         else:
-            if st.button(
-                "전체 정비 (재추출 + 재색인)", type="primary", width="stretch", disabled=btn_disabled,
-                help="품질이 낮거나 미추출된 문서를 LLM으로 재분석하고, 전체 벡터 인덱스를 재구축합니다. 임베딩 모델을 교체했거나 인덱스가 손상된 경우 사용하세요.",
-            ):
+            st.success(f"✅ 전체 {total_cnt}건 메타데이터 정상")
+    except Exception:
+        pass
+
+    # ── 버튼 + 설명 (버튼 왼쪽 / 설명 오른쪽) ────────────────────────
+    btn_disabled = not config.is_llm_configured or is_advanced or is_sync_busy
+
+    def _start_job(mode: str) -> None:
+        if is_sync_busy:
+            st.warning("현행화가 진행 중입니다. 완료 후 데이터 정비를 실행하세요.")
+            return
+        if not config.is_llm_configured:
+            st.error("LLM 설정을 먼저 완료해주세요. (설정 탭 → LLM)")
+            return
+        future = _advanced_executor.submit(_advanced_job, config, mode)
+        st.session_state["is_advanced_running"] = True
+        st.session_state["ss_advanced_start_time"] = time.monotonic()
+        st.session_state["_advanced_future"] = future
+        st.session_state["_advanced_mode"] = mode
+        st.session_state.pop("_advanced_result", None)
+        st.session_state.pop("_advanced_error", None)
+
+    if is_advanced:
+        st.button("진행 중...", type="primary", width="stretch", disabled=True)
+    else:
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if st.button("전체 정비 (재추출 + 재색인)", type="primary", width="stretch", disabled=btn_disabled):
                 _start_job("full")
-            if st.button(
-                "미추출건만 정비", width="stretch", disabled=btn_disabled,
-                help="기술스택·카테고리·문제 설명 등 품질이 낮은 문서만 LLM으로 다시 분석합니다. 벡터 재색인 없이 메타데이터만 보완하므로 빠릅니다.",
-            ):
+        with c2:
+            st.caption("미추출·품질 낮은 문서를 LLM으로 재분석하고 전체 벡터 인덱스를 재구축합니다. 임베딩 모델 교체나 인덱스 손상 시 사용.")
+
+        c3, c4 = st.columns([1, 2])
+        with c3:
+            if st.button("미추출·추출불가건 정비", width="stretch", disabled=btn_disabled):
                 _start_job("fallback")
-            if st.button(
-                "신규·수정건만 정비", width="stretch", disabled=btn_disabled,
-                help="Confluence에서 새로 추가되거나 수정된 문서, 추출에 실패한 문서의 메타데이터만 LLM으로 추출합니다. 정기적인 보완 작업에 적합합니다.",
-            ):
+        with c4:
+            st.caption("기술스택·카테고리·요약 등 품질이 낮은 문서만 LLM으로 재분석합니다. 벡터 재색인 없어 빠릅니다.")
+
+        c5, c6 = st.columns([1, 2])
+        with c5:
+            if st.button("신규·수정건만 정비", width="stretch", disabled=btn_disabled):
                 _start_job("new_changed")
+        with c6:
+            st.caption("Confluence에서 수정되거나 새로 추가된 문서, 추출 실패 문서만 재추출합니다. 정기 보완에 적합합니다.")
 
     if not is_advanced:
         return
@@ -169,7 +172,7 @@ def _advanced_section_fragment(config: AppConfig) -> None:
     # ── 완료 감지 ─────────────────────────────────────────────────────
     if future.done():
         mode = st.session_state.get("_advanced_mode", "full")
-        mode_labels = {"full": "전체 정비", "fallback": "미추출건 정비", "new_changed": "신규·수정건 정비"}
+        mode_labels = {"full": "전체 정비", "fallback": "미추출·추출불가건 정비", "new_changed": "신규·수정건 정비"}
         render_progress_bar(100, f"{mode_labels.get(mode, '데이터 정비')} 완료", done=True, color="green")
         time.sleep(0.8)
         try:
@@ -239,7 +242,7 @@ def _advanced_section_fragment(config: AppConfig) -> None:
     mode = st.session_state.get("_advanced_mode", "full")
     mode_titles = {
         "full": "데이터 정비 진행 중 (① 메타 재추출 → ② 벡터 재구축)",
-        "fallback": "미추출건 정비 진행 중 (메타 재추출)",
+        "fallback": "미추출·추출불가건 정비 진행 중",
         "new_changed": "신규·수정건 정비 진행 중 (메타 재추출)",
     }
     render_progress_bar(pct, mode_titles.get(mode, "데이터 정비 진행 중"), sublabel=sublabel, color="purple")
@@ -520,6 +523,13 @@ def _render_llm_section(config: AppConfig) -> None:
             embed_updates["local_model_name"] = embedding_model.strip()
         else:
             embed_updates["embedding_model"] = embedding_model.strip()
+
+        # 임베딩 Provider 또는 모델명 변경 감지 → 재색인 경고
+        _prev_provider = config.embedding_provider
+        _prev_model = config.local_model_name if _prev_provider == "local" else config.embedding_model
+        _new_model = embedding_model.strip()
+        _embedding_changed = (_prev_provider != embedding_provider) or (_prev_model != _new_model)
+
         _save_general(config, {
             **embed_updates,
             "llm_provider": llm_provider,
@@ -534,6 +544,12 @@ def _render_llm_section(config: AppConfig) -> None:
         _invalidate_services()
         st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
         st.success("LLM 설정 저장 완료 — 서비스 캐시 초기화됨")
+        if _embedding_changed:
+            st.warning(
+                "⚠️ **임베딩 모델이 변경되었습니다.**  \n"
+                "기존 벡터 인덱스와 차원이 달라 벡터 검색이 오작동할 수 있습니다.  \n"
+                "👉 **고급** 탭 → **전체 정비 (재추출 + 재색인)** 을 실행하세요."
+            )
         st.rerun()
 
     st.divider()
@@ -702,7 +718,7 @@ def _render_advanced(config: AppConfig) -> None:
             else:
                 parts = []
                 mode = result.get("mode", "full")
-                mode_labels = {"full": "전체 정비", "fallback": "미추출건 정비", "new_changed": "신규·수정건 정비"}
+                mode_labels = {"full": "전체 정비", "fallback": "미추출·추출불가건 정비", "new_changed": "신규·수정건 정비"}
                 parts = []
                 if meta := result.get("meta"):
                     parts.append(f"메타 재추출: 성공 {meta.get('done', 0)}건 / 실패 {meta.get('failed', 0)}건")
