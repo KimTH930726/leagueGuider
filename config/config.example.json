@@ -1,0 +1,34 @@
+{
+  "_comment": "이 파일을 config.json으로 복사 후 실제 값 입력. config.json은 .gitignore에 포함됨",
+
+  "confluence_base_url": "https://confl.sinc.co.kr",
+  "root_page_id": "495526926",
+  "confluence_type": "server",
+  "auth_type": "token",
+  "auth_token": "여기에_PAT_입력",
+  "auth_username": "",
+
+  "_embedding_comment": "openai 또는 local 선택 가능. local은 API Key 불필요 (오프라인 동작)",
+  "embedding_provider": "openai",
+  "embedding_model": "text-embedding-3-small",
+  "local_model_name": "paraphrase-multilingual-mpnet-base-v2",
+  "local_model_dir": "",
+
+  "llm_provider": "inhouse",
+
+  "_openai_comment": "llm_provider=openai 시 사용",
+  "llm_model": "gpt-4o-mini",
+  "llm_api_key": "",
+
+  "_inhouse_comment": "llm_provider=inhouse 시 사용 (DevX MCP API)",
+  "inhouse_llm_url": "https://devx-mcp.internal/api/v1/chat",
+  "inhouse_llm_api_key": "",
+  "inhouse_llm_usecase_id": "",
+  "inhouse_llm_project_id": "",
+  "inhouse_llm_agent_code": "playground",
+  "inhouse_llm_timeout": 120,
+
+  "sync_threshold_new": 5,
+  "sync_threshold_updated": 10,
+  "extract_metadata": true
+}
