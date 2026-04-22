@@ -15,6 +15,9 @@ if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys.executable).parent
     # PyInstaller --onedir: data files land in _MEIPASS (_internal/)
     _DATA_DIR = Path(sys._MEIPASS)
+    # 번들 모델 사용 — HuggingFace 네트워크 체크 전면 차단
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 else:
     BASE_DIR = Path(__file__).parent
     _DATA_DIR = BASE_DIR
