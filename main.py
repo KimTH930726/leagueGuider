@@ -197,6 +197,8 @@ def _sync_watcher():
         st.session_state["is_sync_running"] = False
         from app.ui.dashboard import _load_stats
         _load_stats.clear()
+        from app.ui.report import _build_period_options
+        _build_period_options.clear()
         st.rerun()
 
     if status == "error":
@@ -309,6 +311,8 @@ def main():
                     )
                     from app.ui.dashboard import _load_stats
                     _load_stats.clear()
+                    from app.ui.report import _build_period_options
+                    _build_period_options.clear()
                     if result["new_count"] or result["updated_count"] or result["deleted_count"]:
                         from app.ui.search import reset_search_service
                         reset_search_service()
