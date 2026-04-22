@@ -82,7 +82,8 @@ def main() -> None:
             "@echo off\nchcp 65001 > nul\ncd /d \"%~dp0\"\n"
             "echo AI리그 로컬 탐색기를 시작합니다...\n"
             "echo 잠시 후 브라우저가 자동으로 열립니다.\n"
-            f'start "" "{exe_rel}"\n',
+            "echo 앱을 종료하려면 이 창을 닫으세요.\n"
+            f'"{exe_rel}"\n',
             encoding="utf-8",
         )
         print(f"  → dist\\실행.bat 생성")
