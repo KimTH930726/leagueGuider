@@ -67,6 +67,7 @@ def main() -> None:
     _run([
         sys.executable, "-m", "PyInstaller",
         "--onedir",
+        "-y",
         f"--name={APP_NAME}",
         f"--add-data=main.py{s}.",
         f"--add-data=config{s}config",
