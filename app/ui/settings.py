@@ -628,7 +628,7 @@ def _render_connection_test(config: AppConfig) -> None:
         st.markdown("**Confluence**")
         if st.button("연결 테스트", key="btn_cf_test"):
             if not config.is_confluence_configured:
-                st.warning("Confluence URL / Root Page ID / PAT를 먼저 설정해주세요.")
+                st.session_state["_cf_test_result"] = ("warn", "Confluence URL / Root Page ID / PAT를 먼저 설정해주세요.")
             else:
                 with st.spinner("연결 중..."):
                     try:
@@ -644,17 +644,27 @@ def _render_connection_test(config: AppConfig) -> None:
                         finally:
                             client.close()
                         if ok:
-                            st.success("Confluence 연결 성공!")
+                            st.session_state["_cf_test_result"] = ("ok", "Confluence 연결 성공!")
                         else:
-                            st.error("연결 실패. PAT와 URL을 확인해주세요.")
+                            st.session_state["_cf_test_result"] = ("err", "연결 실패. PAT와 URL을 확인해주세요.")
                     except Exception as e:
-                        st.error(f"오류: {e}")
+                        st.session_state["_cf_test_result"] = ("err", f"오류: {e}")
+
+        result = st.session_state.get("_cf_test_result")
+        if result:
+            kind, msg = result
+            if kind == "ok":
+                st.success(msg)
+            elif kind == "warn":
+                st.warning(msg)
+            else:
+                st.error(msg)
 
     with col_llm:
         st.markdown("**LLM**")
         if st.button("연결 테스트", key="btn_llm_test"):
             if not config.is_llm_configured:
-                st.warning("LLM 설정을 먼저 완료해주세요.")
+                st.session_state["_llm_test_result"] = ("warn", "LLM 설정을 먼저 완료해주세요.")
             elif config.llm_provider == "inhouse":
                 with st.spinner("InHouse LLM 확인 중..."):
                     try:
@@ -667,22 +677,35 @@ def _render_connection_test(config: AppConfig) -> None:
                             project_id=config.inhouse_llm_project_id,
                             timeout=config.inhouse_llm_timeout,
                         )
-                        st.caption(f"접속 URL: `{config.inhouse_llm_url}`")
                         ok, msg = p.health_check()
+                        caption = f"접속 URL: `{config.inhouse_llm_url}`"
                         if ok:
-                            st.success(f"✅ {msg}")
+                            st.session_state["_llm_test_result"] = ("ok", f"✅ {msg}", caption)
                         else:
-                            st.error(f"❌ {msg}")
+                            st.session_state["_llm_test_result"] = ("err", f"❌ {msg}", caption)
                     except Exception as e:
-                        st.error(f"오류: {e}")
+                        st.session_state["_llm_test_result"] = ("err", f"오류: {e}", "")
             else:
                 with st.spinner("OpenAI API 확인 중..."):
                     try:
                         from openai import OpenAI
                         OpenAI(api_key=config.llm_api_key).models.list()
-                        st.success("OpenAI API Key 유효!")
+                        st.session_state["_llm_test_result"] = ("ok", "OpenAI API Key 유효!", "")
                     except Exception as e:
-                        st.error(f"오류: {e}")
+                        st.session_state["_llm_test_result"] = ("err", f"오류: {e}", "")
+
+        result = st.session_state.get("_llm_test_result")
+        if result:
+            kind, msg = result[0], result[1]
+            caption = result[2] if len(result) > 2 else ""
+            if caption:
+                st.caption(caption)
+            if kind == "ok":
+                st.success(msg)
+            elif kind == "warn":
+                st.warning(msg)
+            else:
+                st.error(msg)
 
 
 def _render_advanced(config: AppConfig) -> None:
