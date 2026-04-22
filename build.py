@@ -12,6 +12,7 @@ from pathlib import Path
 
 APP_NAME = "AI리그로컬탐색기"
 BASE_DIR = Path(__file__).parent
+DEFAULT_EMBED_MODEL = "paraphrase-multilingual-mpnet-base-v2"
 
 
 def _sep() -> str:
@@ -26,6 +27,27 @@ def _run(cmd: list[str]) -> None:
         sys.exit(result.returncode)
 
 
+def _download_embed_model(model_name: str) -> None:
+    """
+    임베딩 모델을 data/models/{model_name}/ 에 SentenceTransformer 포맷으로 저장.
+    이미 존재하면 스킵. EXE 번들용 오프라인 모델 준비.
+    """
+    dest = Path("data/models") / model_name
+    if dest.exists() and any(dest.iterdir()):
+        print(f"  임베딩 모델 이미 존재 (스킵): {dest}")
+        return
+    print(f"  임베딩 모델 다운로드: {model_name}")
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(model_name)
+        model.save(str(dest))
+        print(f"  임베딩 모델 저장 완료: {dest}")
+    except Exception as e:
+        print(f"  [경고] 모델 다운로드 실패 (인터넷 필요): {e}")
+        print("  EXE 실행 시 첫 구동에서 자동 다운로드됩니다.")
+
+
 def main() -> None:
     os.chdir(BASE_DIR)
     s = _sep()
@@ -37,8 +59,9 @@ def main() -> None:
         if Path(d).exists():
             shutil.rmtree(d)
 
-    # --add-data 누락 방지
-    Path("data/models").mkdir(parents=True, exist_ok=True)
+    # 임베딩 모델 번들 준비 (오프라인 EXE용)
+    print("\n[0/3] 임베딩 모델 준비 중...")
+    _download_embed_model(DEFAULT_EMBED_MODEL)
 
     print("\n[1/3] PyInstaller 빌드 중... (수분 소요)")
     _run([

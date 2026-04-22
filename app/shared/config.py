@@ -33,7 +33,7 @@ class AppConfig:
     auth_token: str = ""              # 민감 — DB 전용
 
     # ── 임베딩 ────────────────────────────────────────────────────────
-    embedding_provider: str = "openai"
+    embedding_provider: str = "local"
     embedding_model: str = "text-embedding-3-small"
     local_model_name: str = "paraphrase-multilingual-mpnet-base-v2"
     local_model_dir: str = ""   # 비어있으면 data/models/ 자동설정

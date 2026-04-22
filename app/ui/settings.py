@@ -373,11 +373,6 @@ def _render_confluence_section(config: AppConfig) -> None:
                 index=0 if config.auth_type == "token" else 1,
                 help="PAT → token | ID+PW → basic",
             )
-        auth_username = st.text_input(
-            "사용자명 / 이메일",
-            value=config.auth_username,
-            help="Basic 인증 시 입력. PAT 사용 시 빈칸.",
-        )
         submitted = st.form_submit_button("저장", type="primary")
 
     if submitted:
@@ -386,7 +381,6 @@ def _render_confluence_section(config: AppConfig) -> None:
             "root_page_id": root_page_id.strip(),
             "confluence_type": confluence_type,
             "auth_type": auth_type,
-            "auth_username": auth_username.strip(),
         })
         st.success("Confluence 설정 저장 완료")
         st.rerun()

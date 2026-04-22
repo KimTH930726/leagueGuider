@@ -34,6 +34,25 @@ class LocalEmbeddingProvider(EmbeddingProviderBase):
         self._init_lock = threading.Lock()   # 모델 초기화 직렬화
         self._encode_lock = threading.Lock() # encode() 직렬화 (동일 인스턴스 내)
 
+    def _resolve_model_path(self) -> str:
+        """
+        로드할 모델 경로 결정.
+        우선순위: ① EXE 번들 경로 → ② local_model_dir 내 저장본 → ③ HuggingFace ID
+        """
+        import sys
+        # EXE 번들 내 data/models/{model_name}/ 직접 사용 (HuggingFace 불필요)
+        if getattr(sys, "frozen", False):
+            bundled = Path(sys._MEIPASS) / "data" / "models" / self._model_name
+            if bundled.exists() and any(bundled.iterdir()):
+                logger.info(f"번들 모델 사용: {bundled}")
+                return str(bundled)
+        # 로컬 저장본
+        if self._model_dir:
+            local_path = Path(self._model_dir) / self._model_name
+            if local_path.exists() and any(local_path.iterdir()):
+                return str(local_path)
+        return self._model_name  # HuggingFace 다운로드 fallback
+
     def _load(self) -> None:
         """thread-safe lazy 초기화 (double-check locking)."""
         if self._model is not None:
@@ -49,18 +68,20 @@ class LocalEmbeddingProvider(EmbeddingProviderBase):
                     "pip install sentence-transformers"
                 ) from e
 
-            logger.info(f"로컬 임베딩 모델 로딩: {self._model_name}")
+            model_path = self._resolve_model_path()
+            logger.info(f"로컬 임베딩 모델 로딩: {model_path}")
             kwargs: dict = {}
-            if self._model_dir:
+            # HuggingFace ID로 fallback 시에만 cache_folder 사용
+            if model_path == self._model_name and self._model_dir:
                 Path(self._model_dir).mkdir(parents=True, exist_ok=True)
                 kwargs["cache_folder"] = self._model_dir
 
             try:
-                self._model = SentenceTransformer(self._model_name, **kwargs)
+                self._model = SentenceTransformer(model_path, **kwargs)
                 dim = self._model.get_embedding_dimension()
-                logger.info(f"모델 로드 완료: {self._model_name} (dim={dim})")
+                logger.info(f"모델 로드 완료: {model_path} (dim={dim})")
             except Exception as e:
-                raise EmbeddingError(f"모델 로드 실패 ({self._model_name}): {e}") from e
+                raise EmbeddingError(f"모델 로드 실패 ({model_path}): {e}") from e
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self._load()
