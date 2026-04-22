@@ -72,7 +72,7 @@ def main() -> None:
         f"--add-data=main.py{s}.",
         f"--add-data=config{s}config",
         f"--add-data=app{s}app",
-        f"--add-data=data/models{s}data/models",
+        f"--add-data=data/models/{DEFAULT_EMBED_MODEL}{s}data/models/{DEFAULT_EMBED_MODEL}",
         "--hidden-import=streamlit",
         "--hidden-import=streamlit.web.cli",
         "--hidden-import=streamlit.runtime",
