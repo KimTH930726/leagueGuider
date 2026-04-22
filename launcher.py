@@ -34,16 +34,59 @@ def _find_free_port(start: int = 8501, max_tries: int = 20) -> int:
     return start  # fallback — Streamlit이 자체 처리하도록
 
 
-def _open_browser(port: int, delay: float = 3.0) -> None:
-    """Streamlit 기동 후 브라우저를 자동으로 엽니다."""
-    time.sleep(delay)
+def _wait_and_open_browser(port: int, timeout: float = 30.0) -> None:
+    """Streamlit이 실제로 응답할 때까지 기다린 후 브라우저를 엽니다."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("localhost", port), timeout=1):
+                break
+        except OSError:
+            time.sleep(0.5)
     webbrowser.open(f"http://localhost:{port}")
 
 
-if __name__ == "__main__":
-    port = _find_free_port(8501)
+_PORT_FILE = BASE_DIR / ".app_port"
 
-    threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
+
+def _read_saved_port() -> int | None:
+    """이전 실행 시 저장한 포트 읽기."""
+    try:
+        return int(_PORT_FILE.read_text().strip())
+    except Exception:
+        return None
+
+
+def _save_port(port: int) -> None:
+    try:
+        _PORT_FILE.write_text(str(port))
+    except Exception:
+        pass
+
+
+def _is_our_app_running(port: int) -> bool:
+    """저장된 포트에 실제로 우리 앱이 응답 중인지 확인."""
+    try:
+        with socket.create_connection(("localhost", port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+if __name__ == "__main__":
+    # 이미 실행 중인 우리 앱이 있으면 브라우저만 열고 종료
+    saved_port = _read_saved_port()
+    if saved_port and _is_our_app_running(saved_port):
+        webbrowser.open(f"http://localhost:{saved_port}")
+        sys.exit(0)
+
+    # 포트 파일 초기화 (이전 포트가 죽어있는 경우)
+    _PORT_FILE.unlink(missing_ok=True)
+
+    port = _find_free_port(8501)
+    _save_port(port)
+
+    threading.Thread(target=_wait_and_open_browser, args=(port,), daemon=True).start()
 
     from streamlit.web import cli as stcli
 

@@ -266,6 +266,13 @@ def main():
     _start_bg_sync(config)
     _warmup_embedder(config)
 
+    # headless 모드에서 overflow:hidden이 강제 적용되어 줌인 시 스크롤 불가 → 해제
+    st.markdown(
+        "<style>html, body, [data-testid='stAppViewContainer'],"
+        " [data-testid='stMain'] { overflow: auto !important; }</style>",
+        unsafe_allow_html=True,
+    )
+
     st.title("🤖 AI리그 로컬 탐색기")
     # sync 진행 중일 때만 watcher fragment 등록 — 완료 후 불필요한 2초 polling 제거
     if st.session_state.get("is_sync_running"):
