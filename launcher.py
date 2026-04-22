@@ -49,26 +49,32 @@ def _wait_and_open_browser(port: int, timeout: float = 30.0) -> None:
     webbrowser.open(f"http://localhost:{port}")
 
 
-_PORT_FILE = BASE_DIR / ".app_port"
+_STATE_FILE = BASE_DIR / ".app_state"  # "port:pid" 형식
 
 
-def _read_saved_port() -> int | None:
-    """이전 실행 시 저장한 포트 읽기."""
+def _read_saved_state() -> tuple[int, int] | tuple[None, None]:
+    """이전 실행 시 저장한 포트 + PID 읽기."""
     try:
-        return int(_PORT_FILE.read_text().strip())
+        parts = _STATE_FILE.read_text().strip().split(":")
+        return int(parts[0]), int(parts[1])
     except Exception:
-        return None
+        return None, None
 
 
-def _save_port(port: int) -> None:
+def _save_state(port: int, pid: int) -> None:
     try:
-        _PORT_FILE.write_text(str(port))
+        _STATE_FILE.write_text(f"{port}:{pid}")
     except Exception:
         pass
 
 
-def _is_our_app_running(port: int) -> bool:
-    """저장된 포트에 실제로 우리 앱이 응답 중인지 확인."""
+def _is_our_app_running(port: int, pid: int) -> bool:
+    """저장된 PID가 살아있고 포트도 응답 중일 때만 우리 앱으로 판단.
+    Docker 등 다른 서비스가 같은 포트를 점유해도 PID 불일치로 걸러냄."""
+    try:
+        os.kill(pid, 0)  # PID 존재 여부 확인 (signal 0 = 체크만)
+    except OSError:
+        return False  # PID 없음 — 우리 앱 죽음
     try:
         with socket.create_connection(("localhost", port), timeout=1):
             return True
@@ -78,16 +84,16 @@ def _is_our_app_running(port: int) -> bool:
 
 if __name__ == "__main__":
     # 이미 실행 중인 우리 앱이 있으면 브라우저만 열고 종료
-    saved_port = _read_saved_port()
-    if saved_port and _is_our_app_running(saved_port):
+    saved_port, saved_pid = _read_saved_state()
+    if saved_port and saved_pid and _is_our_app_running(saved_port, saved_pid):
         webbrowser.open(f"http://localhost:{saved_port}")
         sys.exit(0)
 
-    # 포트 파일 초기화 (이전 포트가 죽어있는 경우)
-    _PORT_FILE.unlink(missing_ok=True)
+    # 상태 파일 초기화 (이전 앱이 죽어있는 경우)
+    _STATE_FILE.unlink(missing_ok=True)
 
     port = _find_free_port(8501)
-    _save_port(port)
+    _save_state(port, os.getpid())
 
     threading.Thread(target=_wait_and_open_browser, args=(port,), daemon=True).start()
 
