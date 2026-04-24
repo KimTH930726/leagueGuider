@@ -28,13 +28,20 @@ sys.path.insert(0, str(BASE_DIR))
 
 def _find_free_port(start: int = 8501, max_tries: int = 20) -> int:
     for port in range(start, start + max_tries):
+        # bind 체크: 일반 TCP 점유 감지
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(("", port))  # 0.0.0.0 바인드 — 이미 사용 중인 포트 정확히 감지
-                return port
+                s.bind(("", port))
             except OSError:
                 continue
-    return start  # fallback — Streamlit이 자체 처리하도록
+        # connect 체크: Docker/WSL2처럼 bind는 되지만 실제 응답 있는 포트 제외
+        try:
+            with socket.create_connection(("localhost", port), timeout=0.3):
+                continue  # 이미 응답 중 — 다른 포트로
+        except OSError:
+            pass
+        return port
+    return start  # fallback
 
 
 def _wait_and_open_browser(port: int, timeout: float = 30.0) -> None:
