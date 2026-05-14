@@ -118,7 +118,7 @@ EmbeddingProviderBase (ABC)
 
 LLMProviderBase (ABC)
     ├── OpenAILLMProvider          → GPT-4o-mini
-    └── InHouseLLMProvider         → DevX MCP API (사내망)
+    └── InHouseLLMProvider         → DevX Gateway (OAuth2 + blocking JSON, 사내망)
 
 LLMFactory.create_llm_provider(config) → 공급자 선택
 ```
@@ -140,7 +140,7 @@ AppConfig 기본값
 |-----------|-----------|
 | config.json | Confluence URL, 임베딩 공급자, 동기화 임계값 등 |
 | SQLite | 위 항목 전체 (민감 필드는 빈값) |
-| OS 키체인 (keyring) | auth_token, llm_api_key, inhouse_llm_api_key — Windows: Credential Manager / macOS: Keychain |
+| OS 키체인 (keyring) | auth_token, llm_api_key, inhouse_llm_client_id, inhouse_llm_client_secret — Windows: Credential Manager / macOS: Keychain |
 
 **민감정보 마이그레이션**: 기존에 SQLite 평문으로 저장된 값이 있으면 `get()` 호출 시 자동으로 키체인으로 이전 후 DB 컬럼 클리어.
 

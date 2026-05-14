@@ -22,15 +22,18 @@ _FIELDS = [
     "embedding_model",
     "local_model_name",
     "local_model_dir",
-    "llm_provider",
-    "llm_model",
-    "llm_api_key",
-    "inhouse_llm_url",
-    "inhouse_llm_api_key",
-    "inhouse_llm_usecase_id",
-    "inhouse_llm_project_id",
+    "llm_api_key",  # OpenAI 임베딩용 (embedding_provider="openai" 시)
+    # InHouse LLM (DevX Gateway)
+    "inhouse_llm_auth_endpoint",
+    "inhouse_llm_chat_endpoint",
+    "inhouse_llm_client_id",
+    "inhouse_llm_client_secret",
+    "inhouse_llm_user_id",
+    "inhouse_llm_conversation_id",
+    "inhouse_llm_agent_id",
     "inhouse_llm_agent_code",
     "inhouse_llm_timeout",
+    # ──────────────
     "last_sync_at",
     "sync_threshold_new",
     "sync_threshold_updated",
@@ -38,7 +41,12 @@ _FIELDS = [
 ]
 
 # 민감 정보 필드 목록 (config.json 저장 제외 대상)
-SENSITIVE_FIELDS = {"auth_token", "llm_api_key", "inhouse_llm_api_key"}
+SENSITIVE_FIELDS = {
+    "auth_token",
+    "llm_api_key",
+    "inhouse_llm_client_id",
+    "inhouse_llm_client_secret",
+}
 
 
 class SettingsRepository:
@@ -158,13 +166,14 @@ def _default(field: str):
         "auth_token": "",
         "embedding_provider": "openai",
         "embedding_model": "text-embedding-3-small",
-        "llm_provider": "openai",
-        "llm_model": "gpt-4o-mini",
         "llm_api_key": "",
-        "inhouse_llm_url": "",
-        "inhouse_llm_api_key": "",
-        "inhouse_llm_usecase_id": "",
-        "inhouse_llm_project_id": "",
+        "inhouse_llm_auth_endpoint": "https://devx-gw.shinsegae-inc.com/api/v1/auth/token",
+        "inhouse_llm_chat_endpoint": "https://devx-gw.shinsegae-inc.com/api/v1/agent/chat",
+        "inhouse_llm_client_id": "",
+        "inhouse_llm_client_secret": "",
+        "inhouse_llm_user_id": "",
+        "inhouse_llm_conversation_id": "",
+        "inhouse_llm_agent_id": "",
         "inhouse_llm_agent_code": "playground",
         "inhouse_llm_timeout": 120,
         "last_sync_at": None,

@@ -606,11 +606,17 @@ def _():
 @test("config: AppConfig — 민감 정보 to_json_dict 제외")
 def _():
     from app.shared.config import AppConfig
-    config = AppConfig(auth_token="secret_pat", llm_api_key="sk-key123", inhouse_llm_api_key="ih-key")
+    config = AppConfig(
+        auth_token="secret_pat",
+        llm_api_key="sk-embed-key",  # OpenAI 임베딩용
+        inhouse_llm_client_id="usr-x",
+        inhouse_llm_client_secret="sec-y",
+    )
     d = config.to_json_dict()
     assert "auth_token" not in d
     assert "llm_api_key" not in d
-    assert "inhouse_llm_api_key" not in d
+    assert "inhouse_llm_client_id" not in d
+    assert "inhouse_llm_client_secret" not in d
     # 런타임 필드도 제외
     assert "db_path" not in d
     assert "chroma_path" not in d
@@ -626,14 +632,16 @@ def _():
     ).is_confluence_configured
 
 
-@test("config: AppConfig.is_llm_configured — openai/inhouse 분기")
+@test("config: AppConfig.is_llm_configured — InHouse client_id+secret 둘 다 필요")
 def _():
     from app.shared.config import AppConfig
-    # openai: llm_api_key 있으면 True
-    assert AppConfig(llm_provider="openai", llm_api_key="sk-xxx").is_llm_configured
-    assert not AppConfig(llm_provider="openai", llm_api_key="").is_llm_configured
-    # inhouse: URL만 있으면 True
-    assert AppConfig(llm_provider="inhouse", inhouse_llm_url="http://devx").is_llm_configured
+    assert not AppConfig().is_llm_configured
+    assert not AppConfig(inhouse_llm_client_id="usr-x").is_llm_configured
+    assert not AppConfig(inhouse_llm_client_secret="sec-y").is_llm_configured
+    assert AppConfig(
+        inhouse_llm_client_id="usr-x",
+        inhouse_llm_client_secret="sec-y",
+    ).is_llm_configured
 
 
 @test("chunking: 헤딩 2개 이상 — 섹션 기반 청킹")
@@ -697,11 +705,174 @@ def _():
     assert "new_changed" in src, "new_changed 모드 없음"
 
 
-@test("settings: InHouse key 빈값 저장 불허 확인")
+@test("settings: InHouse 자격증명 폼 — client_id/secret 둘 다 빈값이면 거부")
 def _():
     src = Path("app/ui/settings.py").read_text(encoding="utf-8")
-    # 저장 분기에서 빈값 체크가 있어야 함
-    assert "if not val:" in src or 'if not new_key.strip():' in src
+    # 새 client_credentials 폼 시그니처 확인
+    assert "form_inhouse_credentials" in src, "새 자격증명 폼 없음"
+    assert "inhouse_llm_client_id" in src and "inhouse_llm_client_secret" in src
+    # 둘 다 빈값일 때 거부하는 분기 (updates dict 비어있으면 경고)
+    assert "if not updates:" in src, "빈값 거부 분기 없음"
+
+
+# ─────────────────────── Area 9: InHouseLLMProvider (DevX Gateway) ─────
+
+
+@test("inhouse_llm: _extract_answer — answer/message 우선순위, 빈값 처리")
+def _():
+    from app.infrastructure.llm.inhouse_provider import _extract_answer
+    assert _extract_answer({"answer": "A"}) == "A"
+    assert _extract_answer({"message": "C"}) == "C"
+    # answer 가 최우선
+    assert _extract_answer({"answer": "A", "message": "C"}) == "A"
+    # 둘 다 비면 빈 문자열
+    assert _extract_answer({}) == ""
+    assert _extract_answer({"answer": "", "message": ""}) == ""
+
+
+@test("inhouse_llm: 생성자 — endpoint 또는 client_id/secret 누락 시 ReportError")
+def _():
+    from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
+    from app.shared.exceptions import ReportError
+
+    base_kwargs = dict(
+        auth_endpoint="http://a", chat_endpoint="http://c",
+        client_id="usr", client_secret="sec",
+    )
+    for k in ("auth_endpoint", "chat_endpoint", "client_id", "client_secret"):
+        try:
+            InHouseLLMProvider(**{**base_kwargs, k: ""})
+            assert False, f"{k} 빈값인데 통과"
+        except ReportError:
+            pass
+
+
+@test("inhouse_llm: payload — 빈 agent_id/conversation_id 는 omit (SMAgentLab 검증 패턴)")
+def _():
+    from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
+    # 빈 user_id 는 'system' 으로 fallback, 빈 agent/conv 는 키 자체가 없어야 함
+    p = InHouseLLMProvider(
+        auth_endpoint="http://a", chat_endpoint="http://c",
+        client_id="x", client_secret="y",
+    )
+    payload = p._payload("hi")
+    assert payload["user"] == "system", "빈 user_id → 'system' fallback 안 됨"
+    assert "agent_id" not in payload, "빈 agent_id 가 payload 에 포함됨"
+    assert "conversation_id" not in payload, "빈 conversation_id 가 payload 에 포함됨"
+    assert payload["response_mode"] == "blocking"
+    # 값이 있을 때는 포함
+    p2 = InHouseLLMProvider(
+        auth_endpoint="http://a", chat_endpoint="http://c",
+        client_id="x", client_secret="y",
+        user_id="real-user", agent_id="agent-1", conversation_id="conv-1",
+    )
+    payload2 = p2._payload("hi")
+    assert payload2["user"] == "real-user"
+    assert payload2["agent_id"] == "agent-1"
+    assert payload2["conversation_id"] == "conv-1"
+
+
+def _mock_httpx_for_provider(token_responses: list[dict], chat_responses: list[dict]):
+    """httpx.Client 를 MockTransport 로 패치하는 컨텍스트 매니저.
+    token_responses: /auth POST 마다 순차 반환할 JSON.
+    chat_responses : /chat POST 마다 순차 반환할 JSON (blocking 응답)."""
+    import httpx
+    from contextlib import contextmanager
+    from app.infrastructure.llm import inhouse_provider as mod
+
+    state = {"auth_idx": 0, "chat_idx": 0, "auth_calls": 0, "chat_calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/auth"):
+            i = min(state["auth_idx"], len(token_responses) - 1)
+            state["auth_idx"] += 1
+            state["auth_calls"] += 1
+            return httpx.Response(200, json=token_responses[i])
+        if path.endswith("/chat"):
+            i = min(state["chat_idx"], len(chat_responses) - 1)
+            state["chat_idx"] += 1
+            state["chat_calls"] += 1
+            return httpx.Response(200, json=chat_responses[i])
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    original = mod.httpx.Client
+
+    class _Patched(original):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def ctx():
+        mod.httpx.Client = _Patched
+        try:
+            yield state
+        finally:
+            mod.httpx.Client = original
+
+    return ctx()
+
+
+@test("inhouse_llm: 토큰 캐시 — 만료 전 재발급 없음 + 답변 정상 수신")
+def _():
+    from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
+    InHouseLLMProvider._token_cache.clear()
+    p = InHouseLLMProvider(
+        auth_endpoint="http://gw.test/auth", chat_endpoint="http://gw.test/chat",
+        client_id="usr-1", client_secret="sec-1",
+    )
+    tokens = [{"access_token": "tok-A", "expires_in": 300}]
+    chats = [{"answer": "안녕하세요"}]
+    with _mock_httpx_for_provider(tokens, chats) as state:
+        a1 = p.generate("ping")
+        a2 = p.generate("pong")
+    assert a1 == "안녕하세요" and a2 == "안녕하세요"
+    assert state["auth_calls"] == 1, f"토큰 재발급 발생: {state['auth_calls']}회"
+    assert state["chat_calls"] == 2
+
+
+@test("inhouse_llm: 빈 응답 → ReportError")
+def _():
+    from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
+    from app.shared.exceptions import ReportError
+    InHouseLLMProvider._token_cache.clear()
+    p = InHouseLLMProvider(
+        auth_endpoint="http://gw.test/auth", chat_endpoint="http://gw.test/chat",
+        client_id="usr-2", client_secret="sec-2",
+    )
+    tokens = [{"access_token": "tok-B", "expires_in": 300}]
+    # answer / message 둘 다 비어있는 응답 (dify 가 식별자 잘못됐을 때 패턴)
+    chats = [{"event": "workflow_finished", "data": {}}]
+    with _mock_httpx_for_provider(tokens, chats):
+        try:
+            p.generate("ping")
+            assert False, "빈 응답인데 통과"
+        except ReportError as e:
+            assert "비어있" in str(e), f"안내 메시지 부적절: {e}"
+
+
+@test("inhouse_llm: 토큰 만료 → 자동 재발급")
+def _():
+    from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
+    InHouseLLMProvider._token_cache.clear()
+    p = InHouseLLMProvider(
+        auth_endpoint="http://gw.test/auth", chat_endpoint="http://gw.test/chat",
+        client_id="usr-3", client_secret="sec-3",
+    )
+    tokens = [
+        {"access_token": "tok-old", "expires_in": 1},
+        {"access_token": "tok-new", "expires_in": 300},
+    ]
+    chats = [{"answer": "ok"}, {"answer": "ok2"}]
+    with _mock_httpx_for_provider(tokens, chats) as state:
+        p.generate("ping")
+        # expires_at 을 과거로 강제 → 다음 호출 시 재발급
+        InHouseLLMProvider._token_cache["usr-3"]["expires_at"] = 0.0
+        p.generate("ping")
+    assert state["auth_calls"] == 2, f"재발급 안 됨: {state['auth_calls']}회"
+    assert InHouseLLMProvider._token_cache["usr-3"]["token"] == "tok-new"
 
 
 @test("report_service: _resolve_period 주간 — 정상 주 월요일 반환")

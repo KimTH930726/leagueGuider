@@ -61,7 +61,8 @@ class DashboardService:
                                             extra_where="is_deleted = 0")
 
             recent_rows = conn.execute(
-                """SELECT d.title, d.url, d.author, d.created_at, dm.agent_name, dm.category
+                """SELECT d.title, d.url, d.author, d.created_at,
+                          dm.agent_name, dm.category, dm.one_line_summary, dm.tech_stack_json
                    FROM documents d
                    LEFT JOIN document_metadata dm ON d.id = dm.document_id
                    WHERE d.is_deleted = 0
@@ -230,28 +231,70 @@ class DashboardService:
         return result
 
     def _data_quality(self, conn) -> dict:
-        """문서 메타데이터 추출 완성도 집계."""
+        """문서 메타데이터 추출 완성도 집계 — 4단계 breakdown 포함.
+        검색 카드/대시보드 배지와 동일한 규칙으로 분류:
+          - llm_complete : 요약+기술+카테고리(기타 제외) 3개 모두 채워짐
+          - partial      : 1~2개만 채워짐 (추출불가 제외)
+          - none         : 0개 채워짐 (추출불가 제외)
+          - blocked      : category == '추출불가'
+        """
         row = conn.execute(
             """
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN dm.document_id IS NOT NULL THEN 1 ELSE 0 END) as with_metadata,
-                SUM(CASE WHEN dm.agent_name IS NOT NULL AND dm.agent_name != '' THEN 1 ELSE 0 END) as with_name,
+                SUM(CASE WHEN dm.category = '추출불가' THEN 1 ELSE 0 END) as blocked,
+                SUM(CASE WHEN dm.one_line_summary IS NOT NULL AND dm.one_line_summary != '' THEN 1 ELSE 0 END) as with_summary,
                 SUM(CASE WHEN dm.tech_stack_json IS NOT NULL
                               AND dm.tech_stack_json NOT IN ('null', '[]', '') THEN 1 ELSE 0 END) as with_tech,
-                SUM(CASE WHEN dm.category IS NOT NULL AND dm.category != '' THEN 1 ELSE 0 END) as with_category
+                SUM(CASE WHEN dm.category IS NOT NULL AND dm.category NOT IN ('', '기타', '추출불가') THEN 1 ELSE 0 END) as with_category,
+                SUM(CASE WHEN dm.document_id IS NOT NULL THEN 1 ELSE 0 END) as with_metadata_row
             FROM documents d
             LEFT JOIN document_metadata dm ON d.id = dm.document_id
             WHERE d.is_deleted = 0
             """
         ).fetchone()
-        total = row["total"] or 1
+        total = row["total"] or 0
+
+        # 4단계 breakdown은 문서 단위로 카운트 (요약/기술/카테고리 채워진 개수 기반)
+        breakdown_rows = conn.execute(
+            """
+            SELECT
+                CASE WHEN one_line_summary IS NOT NULL AND one_line_summary != '' THEN 1 ELSE 0 END as has_summary,
+                CASE WHEN tech_stack_json IS NOT NULL AND tech_stack_json NOT IN ('null','[]','') THEN 1 ELSE 0 END as has_tech,
+                CASE WHEN category IS NOT NULL AND category NOT IN ('','기타','추출불가') THEN 1 ELSE 0 END as has_cat,
+                category
+            FROM document_metadata dm
+            JOIN documents d ON d.id = dm.document_id
+            WHERE d.is_deleted = 0
+            """
+        ).fetchall()
+        llm_complete = partial = none = blocked = 0
+        for r in breakdown_rows:
+            if r["category"] == "추출불가":
+                blocked += 1
+                continue
+            filled = r["has_summary"] + r["has_tech"] + r["has_cat"]
+            if filled == 3:
+                llm_complete += 1
+            elif filled >= 1:
+                partial += 1
+            else:
+                none += 1
+        # 메타 row 자체가 없는 문서도 none 으로 합산
+        no_meta_row = total - (row["with_metadata_row"] or 0)
+        none += no_meta_row
+
+        denom = total or 1
         return {
-            "total": row["total"] or 0,
-            "with_metadata": row["with_metadata"] or 0,
+            "total": total,
+            "llm_complete": llm_complete,
+            "partial": partial,
+            "none": none,
+            "blocked": blocked,
+            "pct_meta": round((row["with_metadata_row"] or 0) / denom * 100),
+            "pct_tech": round((row["with_tech"] or 0) / denom * 100),
+            "pct_cat": round((row["with_category"] or 0) / denom * 100),
+            "with_metadata": row["with_metadata_row"] or 0,
             "with_tech": row["with_tech"] or 0,
             "with_category": row["with_category"] or 0,
-            "pct_meta": round((row["with_metadata"] or 0) / total * 100),
-            "pct_tech": round((row["with_tech"] or 0) / total * 100),
-            "pct_cat": round((row["with_category"] or 0) / total * 100),
         }

@@ -14,17 +14,18 @@
   "local_model_name": "paraphrase-multilingual-mpnet-base-v2",
   "local_model_dir": "",
 
-  "llm_provider": "inhouse",
-
-  "_openai_comment": "llm_provider=openai 시 사용",
-  "llm_model": "gpt-4o-mini",
+  "_llm_comment": "LLM 은 사내 DevX Gateway 전용 (사용자별 client_id/secret 키체인 저장).",
   "llm_api_key": "",
 
-  "_inhouse_comment": "llm_provider=inhouse 시 사용 (DevX MCP API)",
-  "inhouse_llm_url": "https://devx-mcp-api.shinsegae-inc.com/api/v1/mcp-command/chat",
-  "inhouse_llm_api_key": "",
-  "inhouse_llm_usecase_id": "",
-  "inhouse_llm_project_id": "",
+  "_embed_openai_comment": "embedding_provider=='openai' 일 때만 사용되는 OpenAI 임베딩 키 (위 llm_api_key 필드). 키체인에 저장.",
+  "_inhouse_comment": "InHouse LLM (DevX Gateway). client_id/secret 은 키체인에만 저장 — 여기는 비워둘 것",
+  "inhouse_llm_auth_endpoint": "https://devx-gw.shinsegae-inc.com/api/v1/auth/token",
+  "inhouse_llm_chat_endpoint": "https://devx-gw.shinsegae-inc.com/api/v1/agent/chat",
+  "inhouse_llm_client_id": "",
+  "inhouse_llm_client_secret": "",
+  "inhouse_llm_user_id": "",
+  "inhouse_llm_conversation_id": "",
+  "inhouse_llm_agent_id": "",
   "inhouse_llm_agent_code": "playground",
   "inhouse_llm_timeout": 120,
 

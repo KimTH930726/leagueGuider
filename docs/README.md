@@ -126,7 +126,7 @@ Confluence
     │
     ▼
 [처리 레이어]
-    ├── LLM 메타데이터 추출 (GPT-4o-mini / InHouse MCP API)
+    ├── LLM 메타데이터 추출 (사내 InHouse — DevX Gateway, OAuth2 client_credentials)
     └── 임베딩 생성 (OpenAI text-embedding-3-small / Local sentence-transformers)
     │
     ▼
@@ -152,7 +152,7 @@ Confluence
 | 관계형 DB | SQLite + FTS5 가상 테이블 (전문 검색) |
 | 벡터 DB | ChromaDB (로컬 HNSW 인덱스) |
 | 임베딩 | OpenAI `text-embedding-3-small` / `sentence-transformers` (오프라인) |
-| LLM | OpenAI GPT-4o-mini / 사내 InHouse MCP API |
+| LLM | 사내 InHouse — DevX Gateway (OAuth2 client_credentials + blocking JSON) |
 | Confluence 수집 | httpx + BeautifulSoup |
 | 암호화 | keyring (Windows Credential Manager / macOS Keychain) |
 | 배포 | PyInstaller onedir EXE |
@@ -339,21 +339,17 @@ Confluence
 
 연결 테스트 버튼으로 성공 확인 후 저장.
 
-#### 2단계 — LLM 연결
+#### 2단계 — LLM 연결 (사내 InHouse 전용)
 
-**OpenAI 사용 시:**
 | 항목 | 값 |
 |---|---|
-| LLM Provider | openai |
-| 모델 | gpt-4o-mini |
-| API Key | OpenAI 대시보드에서 발급 |
+| Auth Endpoint | `https://devx-gw.shinsegae-inc.com/api/v1/auth/token` (기본값 자동 채워짐) |
+| Chat Endpoint | `https://devx-gw.shinsegae-inc.com/api/v1/agent/chat` (기본값 자동 채워짐) |
+| **Client ID / Client Secret** | DevX 팀 발급 — 키체인에 암호화 저장 |
+| Agent ID / User ID / Conversation ID | 선택사항 (dify 등록값 있으면 입력, 비우면 payload omit) |
+| Agent Code | `playground` (기본값) |
 
-**사내 InHouse LLM 사용 시:**
-| 항목 | 값 |
-|---|---|
-| LLM Provider | inhouse |
-| InHouse LLM URL | 사내 MCP API 엔드포인트 |
-| API Key / Usecase ID / Project ID | 사내 발급값 입력 |
+> Client ID/Secret 만 등록해도 동작합니다. 추가 식별자는 dify 에 사전 등록된 값이 있을 때만 입력하세요.
 
 #### 3단계 — 임베딩 설정
 

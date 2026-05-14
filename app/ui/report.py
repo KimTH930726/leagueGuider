@@ -177,7 +177,11 @@ def render_report(config: AppConfig) -> None:
             return
 
         if not config.is_llm_configured:
-            st.error("리포트 생성을 위해 설정 탭에서 LLM을 설정해주세요.")
+            st.error(
+                "❌ **LLM 자격증명이 등록되지 않았습니다.**  \n"
+                "👉 설정 탭 → LLM → 🔑 Client Credentials 에서 DevX 에서 발급받은 "
+                "Client ID/Secret 을 등록하세요."
+            )
             return
 
         regenerate = bool(regen_clicked)

@@ -134,6 +134,7 @@ class SearchService:
                         effects=self._parse_json_list(doc.get("effects_json")),
                         author=doc.get("author"),
                         updated_at=doc.get("updated_at"),
+                        category=doc.get("category"),
                     )
                 )
 

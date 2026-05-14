@@ -98,7 +98,7 @@ def _create_llm(config) -> Optional[object]:
     try:
         from app.infrastructure.llm.factory import create_llm_provider
         llm = create_llm_provider(config)
-        logger.info(f"[ServiceFactory] Search LLM 초기화 완료 ({config.llm_provider})")
+        logger.info("[ServiceFactory] Search LLM 초기화 완료 (InHouse)")
         return llm
     except Exception as e:
         logger.warning(f"[ServiceFactory] Search LLM 초기화 실패: {e}")

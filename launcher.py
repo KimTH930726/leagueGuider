@@ -75,13 +75,40 @@ def _save_state(port: int, pid: int) -> None:
         pass
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """대상 프로세스를 절대 건드리지 않는 PID 생존 체크.
+    Windows에서 os.kill(pid, 0)은 내부적으로 OpenProcess(PROCESS_ALL_ACCESS)
+    + TerminateProcess(handle, 0)을 호출 — 재사용된 PID라면 무관한 프로세스를
+    죽이거나 ACCESS_DENIED로 잔재 상태를 만들 수 있어 사용 금지."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        exit_code = wintypes.DWORD(0)
+        try:
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
 def _is_our_app_running(port: int, pid: int) -> bool:
     """저장된 PID가 살아있고 포트도 응답 중일 때만 우리 앱으로 판단.
     Docker 등 다른 서비스가 같은 포트를 점유해도 PID 불일치로 걸러냄."""
-    try:
-        os.kill(pid, 0)  # PID 존재 여부 확인 (signal 0 = 체크만)
-    except OSError:
-        return False  # PID 없음 — 우리 앱 죽음
+    if not _is_pid_alive(pid):
+        return False
     try:
         with socket.create_connection(("localhost", port), timeout=1):
             return True
@@ -96,8 +123,11 @@ if __name__ == "__main__":
         webbrowser.open(f"http://localhost:{saved_port}")
         sys.exit(0)
 
-    # 상태 파일 초기화 (이전 앱이 죽어있는 경우)
-    _STATE_FILE.unlink(missing_ok=True)
+    # 상태 파일 초기화 (이전 앱이 죽어있는 경우) — 잔재 락이 있어도 실패 무시
+    try:
+        _STATE_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     port = _find_free_port(8501)
     _save_state(port, os.getpid())

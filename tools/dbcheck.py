@@ -14,7 +14,7 @@ cats = conn.execute("SELECT category, COUNT(*) cnt FROM document_metadata WHERE 
 
 # LLM 설정 확인
 try:
-    settings = conn.execute("SELECT llm_provider, llm_model, extract_metadata FROM app_settings WHERE id=1").fetchone()
+    settings = conn.execute("SELECT inhouse_llm_chat_endpoint, inhouse_llm_agent_id, extract_metadata FROM app_settings WHERE id=1").fetchone()
     llm_info = dict(settings) if settings else {}
 except Exception:
     llm_info = {}

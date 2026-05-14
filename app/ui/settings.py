@@ -333,14 +333,20 @@ def _render_credential_status(config: AppConfig) -> None:
     with c1:
         st.metric("Confluence PAT", _mask(config.auth_token))
     with c2:
-        if config.llm_provider == "openai":
-            st.metric("OpenAI API Key", _mask(config.llm_api_key))
-        else:
-            st.metric("InHouse API Key", _mask(config.inhouse_llm_api_key))
+        st.metric("InHouse Client ID", _mask(config.inhouse_llm_client_id))
     with c3:
-        provider_label = "OpenAI" if config.llm_provider == "openai" else "InHouse"
-        configured = "✅ 설정됨" if config.is_llm_configured else "❌ 미설정"
-        st.metric(f"LLM ({provider_label})", configured)
+        ready = "✅ 호출 가능" if config.is_llm_configured else "❌ 미설정"
+        st.metric("LLM 호출 가능 여부", ready)
+
+    if not config.is_llm_configured:
+        st.info(
+            "ℹ️ LLM 자격증명이 등록되지 않았습니다. "
+            "아래 **🔑 Client Credentials** 폼에 DevX 에서 발급받은 Client ID / Secret 을 입력하세요."
+        )
+    st.caption(
+        "💡 Agent ID · User ID · Conversation ID 는 선택사항입니다. "
+        "비워두면 payload 에서 자동으로 omit 되며 dify 가 기본값으로 처리합니다."
+    )
 
 
 def _render_confluence_section(config: AppConfig) -> None:
@@ -425,9 +431,50 @@ def _render_pat_credential(config: AppConfig) -> None:
 
 
 def _render_llm_section(config: AppConfig) -> None:
-    st.markdown("#### LLM 일반 설정")
+    # ── 임베딩 ──────────────────────────────────────────────────────
+    st.markdown("#### 🧩 임베딩 설정")
+    _render_embedding_form(config)
 
-    with st.form("form_llm_general"):
+    st.divider()
+
+    # ── 사내 LLM ────────────────────────────────────────────────────
+    st.markdown("#### 🤖 사내 InHouse LLM (DevX Gateway)")
+    st.info(
+        "📌 **이 값들은 어디서 받나요?**  \n"
+        "사내 DevX 팀에서 발급/등록받은 정보입니다. 모르면 LLM 담당자(또는 #devx-llm 채널)에 문의하세요.  \n\n"
+        "**입력 필요:**  \n"
+        "• **Client ID / Client Secret** — OAuth 인증용 (DevX 발급)  \n"
+        "• **Agent ID / User ID / Conversation ID** — dify 에 등록된 식별자  \n\n"
+        "Endpoint URL · timeout 등 기반 설정은 아래 **고급 설정** 에 기본값으로 들어있어 보통 손댈 일 없습니다."
+    )
+
+    # 1) 메타·필수 식별자 폼 — 평문 저장 (DB)
+    _render_inhouse_identifiers_form(config)
+
+    st.divider()
+
+    # 2) 자격증명 폼 — 키체인 저장
+    st.markdown("##### 🔑 Client Credentials")
+    st.caption("Client ID / Secret 은 OS 키체인에 암호화 저장됩니다. (config.json/SQLite 평문 저장 X)")
+    _render_inhouse_key_credential(config)
+
+    st.divider()
+
+    # 3) 고급 — 접힌 영역
+    with st.expander("⚙️ 고급 설정 (보통 변경 안 함)", expanded=False):
+        _render_inhouse_advanced_form(config)
+
+    # 4) OpenAI 임베딩 키 (embedding_provider == "openai" 일 때만)
+    if config.embedding_provider == "openai":
+        st.divider()
+        st.markdown("##### 🔑 OpenAI 임베딩 API Key")
+        st.caption("위 임베딩 Provider 를 openai 로 선택한 경우에만 사용됩니다. 키체인에 저장.")
+        _render_openai_key_credential(config)
+
+
+def _render_embedding_form(config: AppConfig) -> None:
+    """임베딩 모델/Provider 설정만 분리된 폼."""
+    with st.form("form_embedding"):
         col_e1, col_e2 = st.columns(2)
         embed_options = ["openai", "local"]
         with col_e1:
@@ -450,110 +497,123 @@ def _render_llm_section(config: AppConfig) -> None:
                     "임베딩 모델",
                     value=config.embedding_model or "text-embedding-3-small",
                 )
+        submitted = st.form_submit_button("임베딩 설정 저장", type="primary")
 
-        llm_provider_options = ["openai", "inhouse"]
-        llm_provider = st.selectbox(
-            "LLM Provider",
-            options=llm_provider_options,
-            index=llm_provider_options.index(config.llm_provider)
-            if config.llm_provider in llm_provider_options else 0,
+    if not submitted:
+        return
+
+    updates: dict = {"embedding_provider": embedding_provider}
+    if embedding_provider == "local":
+        updates["local_model_name"] = embedding_model.strip()
+    else:
+        updates["embedding_model"] = embedding_model.strip()
+
+    _prev_provider = config.embedding_provider
+    _prev_model = config.local_model_name if _prev_provider == "local" else config.embedding_model
+    _new_model = embedding_model.strip()
+    _changed = (_prev_provider != embedding_provider) or (_prev_model != _new_model)
+
+    _save_general(config, updates)
+    from app.infrastructure.service_factory import invalidate as _invalidate_services
+    _invalidate_services()
+    st.success("임베딩 설정 저장 완료")
+    if _changed:
+        st.warning(
+            "⚠️ **임베딩 모델이 변경되었습니다.**  \n"
+            "기존 벡터 인덱스와 차원이 달라 벡터 검색이 오작동할 수 있습니다.  \n"
+            "👉 **고급** 탭 → **전체 정비 (재추출 + 재색인)** 을 실행하세요."
         )
+    st.rerun()
 
-        if llm_provider == "openai":
-            llm_model = st.text_input(
-                "모델명", value=config.llm_model or "gpt-4o-mini"
-            )
-            inhouse_llm_url = config.inhouse_llm_url
-            inhouse_llm_usecase_id = config.inhouse_llm_usecase_id
-            inhouse_llm_project_id = config.inhouse_llm_project_id
-            inhouse_llm_agent_code = config.inhouse_llm_agent_code
-            inhouse_llm_timeout = config.inhouse_llm_timeout
-        else:
-            st.caption("사내 DevX MCP API 설정")
-            inhouse_llm_url = st.text_input(
-                "InHouse LLM URL",
-                value=config.inhouse_llm_url,
-            )
-            col_u1, col_u2 = st.columns(2)
-            with col_u1:
-                inhouse_llm_usecase_id = st.text_input(
-                    "Usecase ID (UUID)",
-                    value=config.inhouse_llm_usecase_id,
-                    placeholder="b6958377-...",
-                )
-            with col_u2:
-                inhouse_llm_project_id = st.text_input(
-                    "Project ID (UUID)",
-                    value=config.inhouse_llm_project_id,
-                    placeholder="eb01fb40-...",
-                )
-            col_a1, col_a2 = st.columns(2)
-            with col_a1:
-                inhouse_llm_agent_code = st.text_input(
-                    "Agent Code",
-                    value=config.inhouse_llm_agent_code or "playground",
-                )
-            with col_a2:
-                inhouse_llm_timeout = st.number_input(
-                    "Timeout (초)", min_value=10, max_value=600,
-                    value=config.inhouse_llm_timeout or 120,
-                )
-            llm_model = config.llm_model
+
+def _render_inhouse_identifiers_form(config: AppConfig) -> None:
+    """사용자가 LLM 담당자에게 받는 dify 식별자 + extract_metadata."""
+    with st.form("form_inhouse_identifiers"):
+        agent_id = st.text_input(
+            "Agent ID (UUID)",
+            value=config.inhouse_llm_agent_id,
+            placeholder="예: b6958377-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            help="dify 에 등록된 agent 의 UUID. LLM 담당자가 발급해줍니다.",
+        )
+        user_id = st.text_input(
+            "User ID",
+            value=config.inhouse_llm_user_id,
+            placeholder="예: 20251105_xxxxxxxx",
+            help="dify 에 등록된 사용자 식별자. 본인용 ID 를 LLM 담당자가 발급해줍니다. "
+                 "★ 미등록 ID 를 넣으면 호출은 200 OK 가 떨어져도 응답 본문이 비어 옵니다.",
+        )
+        conversation_id = st.text_input(
+            "Conversation ID (UUID)",
+            value=config.inhouse_llm_conversation_id,
+            placeholder="예: 99cae258-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            help="dify 에 사전 등록된 대화 UUID. 본인용 UUID 를 LLM 담당자가 발급해줍니다. "
+                 "비워두면 매 호출마다 새 UUID 가 발급되지만, 미등록이면 응답이 비어 옵니다.",
+        )
 
         extract_metadata = st.checkbox(
             "동기화 시 LLM 메타데이터 자동 추출",
             value=config.extract_metadata,
-            help="동기화마다 LLM으로 기술스택·효과·키워드를 자동 추출합니다. API Key 필요.",
+            help="현행화마다 LLM 으로 기술스택·효과·키워드 등을 자동 추출합니다.",
         )
 
         submitted = st.form_submit_button("저장", type="primary")
 
-    if submitted:
-        embed_updates: dict = {
-            "embedding_provider": embedding_provider,
-            "extract_metadata": extract_metadata,
-        }
-        if embedding_provider == "local":
-            embed_updates["local_model_name"] = embedding_model.strip()
-        else:
-            embed_updates["embedding_model"] = embedding_model.strip()
+    if not submitted:
+        return
 
-        # 임베딩 Provider 또는 모델명 변경 감지 → 재색인 경고
-        _prev_provider = config.embedding_provider
-        _prev_model = config.local_model_name if _prev_provider == "local" else config.embedding_model
-        _new_model = embedding_model.strip()
-        _embedding_changed = (_prev_provider != embedding_provider) or (_prev_model != _new_model)
+    _save_general(config, {
+        "inhouse_llm_agent_id": _safe_strip(agent_id),
+        "inhouse_llm_user_id": _safe_strip(user_id),
+        "inhouse_llm_conversation_id": _safe_strip(conversation_id),
+        "extract_metadata": extract_metadata,
+    })
+    from app.infrastructure.service_factory import invalidate as _invalidate_services
+    _invalidate_services()
+    st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
+    st.success("LLM 식별자 저장 완료")
+    st.rerun()
 
-        _save_general(config, {
-            **embed_updates,
-            "llm_provider": llm_provider,
-            "llm_model": _safe_strip(llm_model),
-            "inhouse_llm_url": _safe_strip(inhouse_llm_url),
-            "inhouse_llm_usecase_id": _safe_strip(inhouse_llm_usecase_id),
-            "inhouse_llm_project_id": _safe_strip(inhouse_llm_project_id),
-            "inhouse_llm_agent_code": _safe_strip(inhouse_llm_agent_code),
-            "inhouse_llm_timeout": int(inhouse_llm_timeout),
-        })
-        from app.infrastructure.service_factory import invalidate as _invalidate_services
-        _invalidate_services()
-        st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
-        st.success("LLM 설정 저장 완료 — 서비스 캐시 초기화됨")
-        if _embedding_changed:
-            st.warning(
-                "⚠️ **임베딩 모델이 변경되었습니다.**  \n"
-                "기존 벡터 인덱스와 차원이 달라 벡터 검색이 오작동할 수 있습니다.  \n"
-                "👉 **고급** 탭 → **전체 정비 (재추출 + 재색인)** 을 실행하세요."
+
+def _render_inhouse_advanced_form(config: AppConfig) -> None:
+    """기반 endpoint/timeout/agent_code — 거의 변경 안 함."""
+    with st.form("form_inhouse_advanced"):
+        auth_endpoint = st.text_input(
+            "Auth Endpoint",
+            value=config.inhouse_llm_auth_endpoint,
+            help="OAuth2 토큰 발급 URL",
+        )
+        chat_endpoint = st.text_input(
+            "Chat Endpoint",
+            value=config.inhouse_llm_chat_endpoint,
+            help="채팅 호출 URL (SSE)",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            agent_code = st.text_input(
+                "Agent Code",
+                value=config.inhouse_llm_agent_code or "playground",
+                help="기본 'playground' — DevX 가 별도 지시 없으면 그대로 두세요.",
             )
-        st.rerun()
+        with col2:
+            timeout = st.number_input(
+                "Timeout (초)", min_value=10, max_value=600,
+                value=config.inhouse_llm_timeout or 120,
+            )
+        submitted = st.form_submit_button("고급 설정 저장")
 
-    st.divider()
-    st.markdown("#### LLM API Key")
-    st.caption("API Key는 SQLite에만 저장됩니다. config.json에는 기록되지 않습니다.")
+    if not submitted:
+        return
 
-    if config.llm_provider == "openai":
-        _render_openai_key_credential(config)
-    else:
-        _render_inhouse_key_credential(config)
+    _save_general(config, {
+        "inhouse_llm_auth_endpoint": _safe_strip(auth_endpoint),
+        "inhouse_llm_chat_endpoint": _safe_strip(chat_endpoint),
+        "inhouse_llm_agent_code": _safe_strip(agent_code),
+        "inhouse_llm_timeout": int(timeout),
+    })
+    from app.infrastructure.service_factory import invalidate as _invalidate_services
+    _invalidate_services()
+    st.success("고급 설정 저장 완료")
+    st.rerun()
 
 
 def _render_openai_key_credential(config: AppConfig) -> None:
@@ -587,34 +647,51 @@ def _render_openai_key_credential(config: AppConfig) -> None:
 
 
 def _render_inhouse_key_credential(config: AppConfig) -> None:
-    current = _mask(config.inhouse_llm_api_key)
-    st.info(f"현재 저장된 InHouse API Key: **{current}**")
-    st.caption("InHouse API Key가 없으면 빈칸으로 두세요 (시스템 키 없이 동작).")
+    st.info(
+        f"현재 저장된 Client ID: **{_mask(config.inhouse_llm_client_id)}**  \n"
+        f"현재 저장된 Client Secret: **{_mask(config.inhouse_llm_client_secret)}**"
+    )
+    st.caption(
+        "DevX Gateway 는 OAuth2 client_credentials 인증을 사용합니다. "
+        "둘 다 입력해야 토큰이 발급됩니다."
+    )
 
-    with st.form("form_inhouse_key"):
-        new_key = st.text_input(
-            "새 InHouse API Key",
+    with st.form("form_inhouse_credentials"):
+        new_client_id = st.text_input(
+            "새 Client ID",
+            type="password",
+            placeholder="usr-XXXXXXXX (비워두면 변경 안 됨)",
+        )
+        new_client_secret = st.text_input(
+            "새 Client Secret",
             type="password",
             placeholder="비워두면 변경 안 됨",
         )
         col_save, col_clear = st.columns([3, 1])
         with col_save:
-            key_saved = st.form_submit_button("저장", type="primary")
+            saved = st.form_submit_button("저장", type="primary")
         with col_clear:
-            key_cleared = st.form_submit_button("삭제", type="secondary")
+            cleared = st.form_submit_button("삭제", type="secondary")
 
-    if key_saved:
-        val = new_key.strip()
-        if not val:
-            st.warning("API Key를 입력하세요.")
+    if saved:
+        updates: dict = {}
+        if new_client_id.strip():
+            updates["inhouse_llm_client_id"] = new_client_id.strip()
+        if new_client_secret.strip():
+            updates["inhouse_llm_client_secret"] = new_client_secret.strip()
+        if not updates:
+            st.warning("Client ID 또는 Client Secret 중 하나 이상 입력하세요.")
         else:
-            _save_credentials(config, {"inhouse_llm_api_key": val})
-            st.success("InHouse API Key가 저장되었습니다.")
+            _save_credentials(config, updates)
+            st.success(f"자격증명이 저장되었습니다 ({', '.join(updates.keys())}).")
             st.rerun()
 
-    if key_cleared:
-        _save_credentials(config, {"inhouse_llm_api_key": ""})
-        st.warning("InHouse API Key가 삭제되었습니다.")
+    if cleared:
+        _save_credentials(config, {
+            "inhouse_llm_client_id": "",
+            "inhouse_llm_client_secret": "",
+        })
+        st.warning("Client ID / Secret 이 모두 삭제되었습니다.")
         st.rerun()
 
 
@@ -664,33 +741,27 @@ def _render_connection_test(config: AppConfig) -> None:
         st.markdown("**LLM**")
         if st.button("연결 테스트", key="btn_llm_test"):
             if not config.is_llm_configured:
-                st.session_state["_llm_test_result"] = ("warn", "LLM 설정을 먼저 완료해주세요.")
-            elif config.llm_provider == "inhouse":
-                with st.spinner("InHouse LLM 확인 중..."):
+                st.session_state["_llm_test_result"] = (
+                    "warn", "InHouse LLM 자격증명(Client ID/Secret)을 먼저 등록해주세요.", "",
+                )
+            else:
+                with st.spinner("InHouse LLM (DevX Gateway) 확인 중..."):
                     try:
                         from app.infrastructure.llm.inhouse_provider import InHouseLLMProvider
                         p = InHouseLLMProvider(
-                            url=config.inhouse_llm_url,
-                            api_key=config.inhouse_llm_api_key,
+                            auth_endpoint=config.inhouse_llm_auth_endpoint,
+                            chat_endpoint=config.inhouse_llm_chat_endpoint,
+                            client_id=config.inhouse_llm_client_id,
+                            client_secret=config.inhouse_llm_client_secret,
+                            user_id=config.inhouse_llm_user_id,
+                            conversation_id=config.inhouse_llm_conversation_id,
+                            agent_id=config.inhouse_llm_agent_id,
                             agent_code=config.inhouse_llm_agent_code,
-                            usecase_id=config.inhouse_llm_usecase_id,
-                            project_id=config.inhouse_llm_project_id,
                             timeout=config.inhouse_llm_timeout,
                         )
-                        ok, msg = p.health_check()
-                        caption = f"접속 URL: `{config.inhouse_llm_url}`"
-                        if ok:
-                            st.session_state["_llm_test_result"] = ("ok", f"✅ {msg}", caption)
-                        else:
-                            st.session_state["_llm_test_result"] = ("err", f"❌ {msg}", caption)
-                    except Exception as e:
-                        st.session_state["_llm_test_result"] = ("err", f"오류: {e}", "")
-            else:
-                with st.spinner("OpenAI API 확인 중..."):
-                    try:
-                        from openai import OpenAI
-                        OpenAI(api_key=config.llm_api_key).models.list()
-                        st.session_state["_llm_test_result"] = ("ok", "OpenAI API Key 유효!", "")
+                        status, msg = p.health_check()
+                        caption = f"chat: `{config.inhouse_llm_chat_endpoint}`"
+                        st.session_state["_llm_test_result"] = (status, msg, caption)
                     except Exception as e:
                         st.session_state["_llm_test_result"] = ("err", f"오류: {e}", "")
 

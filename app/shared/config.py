@@ -38,16 +38,17 @@ class AppConfig:
     local_model_name: str = "paraphrase-multilingual-mpnet-base-v2"
     local_model_dir: str = ""   # 비어있으면 data/models/ 자동설정
 
-    # ── LLM 공통 ──────────────────────────────────────────────────────
-    llm_provider: str = "openai"      # "openai" | "inhouse"
-    llm_model: str = "gpt-4o-mini"
-    llm_api_key: str = ""             # 민감 — DB 전용
+    # ── 임베딩 OpenAI Key (embedding_provider=="openai" 일 때만 사용) ──
+    llm_api_key: str = ""             # 민감 — 키체인
 
-    # ── InHouse LLM ───────────────────────────────────────────────────
-    inhouse_llm_url: str = "https://devx-mcp-api.shinsegae-inc.com/api/v1/mcp-command/chat"
-    inhouse_llm_api_key: str = ""     # 민감 — DB 전용
-    inhouse_llm_usecase_id: str = ""
-    inhouse_llm_project_id: str = ""
+    # ── InHouse LLM (DevX Gateway: OAuth2 + SSE) — 사내 LLM 전용 ──────
+    inhouse_llm_auth_endpoint: str = "https://devx-gw.shinsegae-inc.com/api/v1/auth/token"
+    inhouse_llm_chat_endpoint: str = "https://devx-gw.shinsegae-inc.com/api/v1/agent/chat"
+    inhouse_llm_client_id: str = ""        # 민감 — 키체인
+    inhouse_llm_client_secret: str = ""    # 민감 — 키체인
+    inhouse_llm_user_id: str = ""          # dify에 사전 등록된 user ID
+    inhouse_llm_conversation_id: str = ""  # dify에 사전 등록된 UUID
+    inhouse_llm_agent_id: str = ""
     inhouse_llm_agent_code: str = "playground"
     inhouse_llm_timeout: int = 120
 
@@ -72,12 +73,18 @@ class AppConfig:
 
     @property
     def is_llm_configured(self) -> bool:
-        if self.llm_provider == "inhouse":
-            return bool(self.inhouse_llm_url)
-        return bool(self.llm_api_key)
+        """LLM 호출 가능 여부 — Client ID/Secret 만 있으면 OK.
+        Agent ID / User ID / Conversation ID 는 선택사항 (있으면 payload 에 포함, 없으면 omit).
+        SMAgentLab 검증 패턴 — dify 가 빈 필드는 거부하지만, 필드 자체가 없으면 정상 처리."""
+        return bool(self.inhouse_llm_client_id and self.inhouse_llm_client_secret)
 
     # config.json에 저장하지 않을 필드
-    _SENSITIVE = {"auth_token", "llm_api_key", "inhouse_llm_api_key"}
+    _SENSITIVE = {
+        "auth_token",
+        "llm_api_key",
+        "inhouse_llm_client_id",
+        "inhouse_llm_client_secret",
+    }
     # 런타임 계산 필드 (저장 제외)
     _RUNTIME = {"db_path", "chroma_path"}
 

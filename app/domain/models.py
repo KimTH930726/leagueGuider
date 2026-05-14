@@ -82,6 +82,7 @@ class SearchResult:
     author: Optional[str] = None
     updated_at: Optional[str] = None
     match_reason: Optional[str] = None  # rerank이 생성한 매칭 근거
+    category: Optional[str] = None      # 메타 추출 상태 판별용 (LLM/fallback/추출불가)
 
 
 @dataclass

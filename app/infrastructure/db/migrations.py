@@ -92,13 +92,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
     llm_model               TEXT DEFAULT 'gpt-4o-mini',
     llm_api_key             TEXT DEFAULT '',
 
-    -- InHouse LLM
-    inhouse_llm_url         TEXT DEFAULT '',
-    inhouse_llm_api_key     TEXT DEFAULT '',
-    inhouse_llm_usecase_id  TEXT DEFAULT '',
-    inhouse_llm_project_id  TEXT DEFAULT '',
-    inhouse_llm_agent_code  TEXT DEFAULT 'playground',
-    inhouse_llm_timeout     INTEGER DEFAULT 120,
+    -- InHouse LLM (DevX Gateway: OAuth2 + SSE)
+    inhouse_llm_auth_endpoint    TEXT DEFAULT 'https://devx-gw.shinsegae-inc.com/api/v1/auth/token',
+    inhouse_llm_chat_endpoint    TEXT DEFAULT 'https://devx-gw.shinsegae-inc.com/api/v1/agent/chat',
+    inhouse_llm_client_id        TEXT DEFAULT '',
+    inhouse_llm_client_secret    TEXT DEFAULT '',
+    inhouse_llm_user_id          TEXT DEFAULT '',
+    inhouse_llm_conversation_id  TEXT DEFAULT '',
+    inhouse_llm_agent_id         TEXT DEFAULT '',
+    inhouse_llm_agent_code       TEXT DEFAULT 'playground',
+    inhouse_llm_timeout          INTEGER DEFAULT 120,
 
     -- 동기화
     last_sync_at            TEXT,
@@ -138,10 +141,14 @@ CREATE TRIGGER IF NOT EXISTS documents_fts_delete
 # 기존 DB에 없을 수 있는 컬럼 — ALTER TABLE로 추가 (이미 있으면 무시)
 _ALTER_COLUMNS: list[tuple[str, str]] = [
     ("app_settings", "ALTER TABLE app_settings ADD COLUMN confluence_type TEXT DEFAULT 'server'"),
-    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_url TEXT DEFAULT ''"),
-    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_api_key TEXT DEFAULT ''"),
-    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_usecase_id TEXT DEFAULT ''"),
-    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_project_id TEXT DEFAULT ''"),
+    # InHouse LLM — DevX Gateway 마이그레이션 (구 inhouse_llm_url/api_key/usecase_id/project_id 는 사용 안 함, 컬럼 잔존 무해)
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_auth_endpoint TEXT DEFAULT 'https://devx-gw.shinsegae-inc.com/api/v1/auth/token'"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_chat_endpoint TEXT DEFAULT 'https://devx-gw.shinsegae-inc.com/api/v1/agent/chat'"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_client_id TEXT DEFAULT ''"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_client_secret TEXT DEFAULT ''"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_user_id TEXT DEFAULT ''"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_conversation_id TEXT DEFAULT ''"),
+    ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_agent_id TEXT DEFAULT ''"),
     ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_agent_code TEXT DEFAULT 'playground'"),
     ("app_settings", "ALTER TABLE app_settings ADD COLUMN inhouse_llm_timeout INTEGER DEFAULT 120"),
     ("app_settings", "ALTER TABLE app_settings ADD COLUMN extract_metadata INTEGER DEFAULT 1"),

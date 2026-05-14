@@ -138,13 +138,71 @@ def _render_category_trend(trend: list[dict]) -> None:
 
 
 def _render_data_quality(dq: dict) -> None:
-    """데이터 품질 미니 게이지."""
-    if not dq or dq.get("total", 0) == 0:
+    """메타데이터 추출 4단계 breakdown (절대 건수 + 비율)."""
+    total = dq.get("total", 0)
+    if total == 0:
         return
-    cols = st.columns(3)
-    cols[0].metric("메타 추출", f"{dq['pct_meta']}%", help="메타데이터 추출 완료 비율")
-    cols[1].metric("기술스택 보유", f"{dq['pct_tech']}%", help="기술스택 정보가 있는 문서 비율")
-    cols[2].metric("카테고리 분류", f"{dq['pct_cat']}%", help="카테고리가 지정된 문서 비율")
+
+    llm_complete = dq.get("llm_complete", 0)
+    partial = dq.get("partial", 0)
+    none_cnt = dq.get("none", 0)
+    blocked = dq.get("blocked", 0)
+
+    def _pct(n: int) -> str:
+        return f"{round(n / total * 100)}%" if total else "0%"
+
+    st.caption(f"전체 **{total}건** — 요약·기술스택·카테고리(기타 제외) 3 필드 채움 정도로 분류")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "✅ LLM 완전 분석", f"{llm_complete}건", _pct(llm_complete),
+        help="요약 · 기술스택 · 카테고리 3개 모두 채워진 문서",
+    )
+    c2.metric(
+        "📊 부분 추출", f"{partial}건", _pct(partial),
+        help="1~2개 필드만 채워진 문서 — 데이터 정비 → '미추출·추출불가건 정비' 로 보완 가능",
+    )
+    c3.metric(
+        "⚠️ 미추출", f"{none_cnt}건", _pct(none_cnt),
+        help="핵심 필드 0개 — LLM 미설정 상태에서 sync 됐을 가능성. 정비 → '미추출 정비' 권장",
+    )
+    c4.metric(
+        "🚫 추출불가", f"{blocked}건", _pct(blocked),
+        help="LLM이 응답 거부 (민감 정보 등). 본문 수정 후 재시도 필요",
+    )
+
+
+def _doc_meta_badge(doc: dict) -> tuple[str, str, str]:
+    """문서 row → (라벨, 배경색, tooltip). 검색 카드와 동일 규칙."""
+    if doc.get("category") == "추출불가":
+        return (
+            "🚫 추출불가", "#5e2828",
+            "LLM이 응답을 거부해서 메타 추출 불가",
+        )
+    summary = (doc.get("one_line_summary") or "").strip()
+    tech = (doc.get("tech_stack_json") or "").strip()
+    category = doc.get("category") or ""
+    has_summary = bool(summary)
+    has_tech = tech not in ("", "[]", "null", "None")
+    has_real_category = category not in ("", "기타")
+    filled = int(has_summary) + int(has_tech) + int(has_real_category)
+
+    missing = []
+    if not has_summary:        missing.append("요약")
+    if not has_tech:           missing.append("기술스택")
+    if not has_real_category:  missing.append("카테고리")
+    missing_str = " / ".join(missing) if missing else "없음"
+
+    if filled == 3:
+        return ("✅ LLM 분석", "#1a5e1a", "요약·기술스택·카테고리 모두 추출됨")
+    if filled >= 1:
+        return (
+            f"📊 부분 {filled}/3", "#3d4f1a",
+            f"누락: {missing_str}",
+        )
+    return (
+        "⚠️ 미추출", "#5e4e1a",
+        f"메타 비어있음 (누락: {missing_str})",
+    )
 
 
 # ── 메인 렌더 ─────────────────────────────────────────────────────────
@@ -312,10 +370,19 @@ def render_dashboard(config: AppConfig, on_sync_click=None) -> None:
             url = doc.get("url", "")
             author = doc.get("author", "")
             created = (doc.get("created_at") or "")[:10]
+            badge_label, badge_color, badge_tip = _doc_meta_badge(doc)
 
-            col_name, col_meta = st.columns([4, 2])
+            col_name, col_badge, col_meta = st.columns([3, 1, 2])
             with col_name:
                 st.markdown(f"🔗 [{name}]({url})" if url else f"📄 {name}")
+            with col_badge:
+                st.markdown(
+                    f'<div style="margin-top:2px" title="{badge_tip}">'
+                    f'<span style="background:{badge_color};color:white;padding:2px 8px;'
+                    f'border-radius:10px;font-size:0.72em;font-weight:600">{badge_label}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             with col_meta:
                 parts = [f"✍️ {author}" if author else "", f"📅 {created}" if created else ""]
                 st.caption("  ".join(p for p in parts if p))

@@ -1,26 +1,21 @@
 """
-사내 InHouse LLM Provider (DevX MCP API) — 동기 버전.
+사내 InHouse LLM Provider (DevX Gateway) — 동기 + blocking 모드.
 
-SMAgentLab의 service/llm/inhouse.py를 Streamlit(sync) 환경에 맞게 포팅.
-- async httpx.AsyncClient  →  sync httpx.Client
-- generate_once()           →  generate(prompt)  (LLMProviderBase 인터페이스)
-- 스트리밍은 leagueGuider에서 불필요하여 blocking 모드만 구현
+SMAgentLab 의 작동 검증된 패턴을 그대로 이식:
+  - response_mode = "blocking" (SSE 아님)
+  - 선택 필드(agent_id, conversation_id)는 비어있으면 payload 에서 **omit**
+    (빈 문자열로 전송하지 않음 — dify 가 빈 값 들어오면 거부)
+  - user_id 비어있으면 "system" fallback (SMAgentLab 에서 검증)
 
-DevX MCP API 페이로드 스펙 (SMAgentLab 참조):
-  POST {url}
-  Authorization: Bearer {api_key}
-  Body: {
-    usecase_code, query, response_mode="blocking",
-    inputs?: {model}, usecase_id?, project_id?, conversation_id?
-  }
-
-응답 우선순위 (SMAgentLab _extract_answer 동일):
-  1. external_response.dify_response.answer
-  2. message
-  3. answer
+호출 흐름:
+  1. POST {auth_endpoint}  data: grant_type=client_credentials, client_id, client_secret
+     → {"access_token": "...", "expires_in": 300}
+  2. POST {chat_endpoint}  Authorization: Bearer {token}, response_mode=blocking
+     → {"answer": "..."} 또는 {"message": "..."}
 """
 import json
-from typing import Optional
+import threading
+import time
 
 import httpx
 
@@ -32,119 +27,199 @@ logger = get_logger()
 
 
 def _extract_answer(data: dict) -> str:
-    """SMAgentLab _extract_answer() 동일 로직."""
-    ext = data.get("external_response")
-    if isinstance(ext, dict):
-        dify = ext.get("dify_response")
-        if isinstance(dify, dict) and dify.get("answer"):
-            return dify["answer"]
-    if data.get("message"):
-        return data["message"]
-    if data.get("answer"):
-        return data["answer"]
-    return json.dumps(data, ensure_ascii=False)
+    """blocking 응답 JSON 에서 answer 추출. dify 는 answer/message 둘 중 하나로 반환."""
+    return data.get("answer") or data.get("message") or ""
 
 
 class InHouseLLMProvider(LLMProviderBase):
-    """DevX MCP API 동기 클라이언트."""
+    """DevX Gateway 동기 클라이언트 (OAuth2 client_credentials + blocking)."""
+
+    _token_cache: dict[str, dict] = {}
+    _token_lock = threading.Lock()
 
     def __init__(
         self,
-        url: str,
-        api_key: str = "",
+        auth_endpoint: str,
+        chat_endpoint: str,
+        client_id: str,
+        client_secret: str,
+        user_id: str = "",
+        conversation_id: str = "",
+        agent_id: str = "",
         agent_code: str = "playground",
-        usecase_id: str = "",
-        project_id: str = "",
-        model: str = "",
         timeout: int = 120,
     ):
-        if not url:
+        if not auth_endpoint or not chat_endpoint:
             raise ReportError(
-                "LLM Provider=inhouse 이지만 inhouse_llm_url 이 설정되지 않았습니다.\n"
-                "설정 탭 → InHouse LLM URL을 입력하세요."
+                "InHouse LLM endpoint 가 비어 있습니다.\n"
+                "설정 탭 → LLM 고급 설정에서 auth/chat endpoint 를 입력하세요."
             )
-        self._url = url.rstrip("/")
-        self._api_key = api_key
-        self._agent_code = agent_code
-        self._usecase_id = usecase_id or None
-        self._project_id = project_id or None
-        self._model = model or None
+        if not client_id or not client_secret:
+            raise ReportError(
+                "InHouse LLM client_id / client_secret 이 설정되지 않았습니다.\n"
+                "설정 탭 → LLM 자격증명에서 등록하세요."
+            )
+        self._auth_endpoint = auth_endpoint.rstrip("/")
+        self._chat_endpoint = chat_endpoint.rstrip("/")
+        self._client_id = client_id
+        self._client_secret = client_secret
+        # SMAgentLab 검증 패턴: user_id 비어있으면 "system" fallback
+        self._user = user_id or "system"
+        self._conversation_id = conversation_id  # 비면 payload 에서 omit
+        self._agent_id = agent_id                # 비면 payload 에서 omit
+        self._agent_code = agent_code or "playground"
         self._timeout = timeout
 
-    def _headers(self) -> dict:
-        h = {"Content-Type": "application/json"}
-        if self._api_key:
-            h["Authorization"] = f"Bearer {self._api_key}"
-        return h
+    def _get_access_token(self) -> str:
+        with self._token_lock:
+            now = time.time()
+            state = self._token_cache.get(self._client_id) or {"token": None, "expires_at": 0.0}
+            if state["token"] and state["expires_at"] > now + 30:
+                return state["token"]
+
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    resp = client.post(
+                        self._auth_endpoint,
+                        data={
+                            "grant_type": "client_credentials",
+                            "client_id": self._client_id,
+                            "client_secret": self._client_secret,
+                        },
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+            except httpx.HTTPStatusError as e:
+                raise ReportError(
+                    f"InHouse LLM 토큰 발급 실패 (HTTP {e.response.status_code}): "
+                    f"{e.response.text[:200]}"
+                ) from e
+            except httpx.RequestError as e:
+                raise ReportError(f"InHouse LLM 토큰 발급 연결 오류: {e}") from e
+
+            token = data.get("access_token")
+            if not token:
+                raise ReportError(f"InHouse LLM 토큰 응답에 access_token 없음: {data}")
+            expires_in = int(data.get("expires_in", 300))
+            state["token"] = token
+            state["expires_at"] = now + expires_in
+            self._token_cache[self._client_id] = state
+            logger.info(
+                "InHouse LLM 토큰 발급 완료 (expires_in=%ds, client=%s...)",
+                expires_in, self._client_id[:8],
+            )
+            return token
 
     def _payload(self, query: str) -> dict:
-        """blocking 모드 페이로드 (SMAgentLab _build_payload 참조)."""
-        body: dict = {
-            "usecase_code": self._agent_code,
+        """blocking 페이로드 — 빈 선택 필드는 omit (★ dify 가 빈 값 거부)."""
+        payload: dict = {
+            "user": self._user,
             "query": query,
+            "agent_code": self._agent_code,
+            "knowledge_ids": [],
             "response_mode": "blocking",
         }
-        if self._model:
-            body["inputs"] = {"model": self._model}
-        if self._usecase_id:
-            body["usecase_id"] = self._usecase_id
-        if self._project_id:
-            body["project_id"] = self._project_id
-        return body
+        if self._agent_id:
+            payload["agent_id"] = self._agent_id
+        if self._conversation_id:
+            payload["conversation_id"] = self._conversation_id
+        return payload
 
     def generate(self, prompt: str) -> str:
-        """
-        단순 blocking POST → answer 반환.
-        leagueGuider에서는 system prompt를 prompt에 인라인으로 넣어서 전달함
-        (extractor.py, report_service.py 모두 이 방식).
-        """
+        """프롬프트 → 응답. blocking 호출."""
+        token = self._get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        payload = self._payload(prompt)
         logger.info(
-            "InHouse LLM 호출 → %s (query=%d chars)",
-            self._url, len(prompt),
+            "InHouse LLM 호출 → %s (query=%d chars, user=%s, agent_id=%s, conv_id=%s)",
+            self._chat_endpoint, len(prompt), self._user,
+            self._agent_id or "(none)", self._conversation_id or "(none)",
         )
         try:
             with httpx.Client(timeout=self._timeout) as client:
-                resp = client.post(
-                    self._url,
-                    json=self._payload(prompt),
-                    headers=self._headers(),
-                )
-                logger.info("InHouse LLM 응답 ← status=%d", resp.status_code)
-                resp.raise_for_status()
-                answer = _extract_answer(resp.json())
-                logger.info("InHouse LLM 답변 길이: %d chars", len(answer))
-                if "민감 정보" in answer or "응답을 제공할 수 없습니다" in answer:
-                    raise ReportError(
-                        "LLM 생성 실패: 요청 내용이 민감 정보 필터에 걸렸습니다.\n"
-                        "프롬프트에 포함된 문서 내용을 확인하거나, 관리자에게 문의하세요."
-                    )
-                return answer
+                resp = client.post(self._chat_endpoint, json=payload, headers=headers)
+            logger.info("InHouse LLM 응답 ← status=%d", resp.status_code)
+            resp.raise_for_status()
+            data = resp.json()
         except httpx.HTTPStatusError as e:
             raise ReportError(
-                f"InHouse LLM HTTP 오류 (status={e.response.status_code}): {e}"
+                f"InHouse LLM HTTP 오류 (status={e.response.status_code}): "
+                f"{e.response.text[:200]}"
             ) from e
         except httpx.RequestError as e:
             raise ReportError(f"InHouse LLM 연결 오류: {e}") from e
-        except Exception as e:
-            raise ReportError(f"InHouse LLM 실패: {e}") from e
+        except json.JSONDecodeError:
+            raise ReportError(f"InHouse LLM 응답이 JSON 형식이 아님: {resp.text[:200]}")
 
-    def health_check(self) -> tuple[bool, str]:
-        """서버 도달 가능 여부. (성공여부, 메시지) 반환.
-        HTTP 응답이 오면 (연결 오류가 아니면) 서버 살아있음으로 판단."""
+        answer = _extract_answer(data).strip()
+        if not answer:
+            raise ReportError(
+                "InHouse LLM 응답이 비어있습니다.\n"
+                f"전체 응답: {json.dumps(data, ensure_ascii=False)[:300]}"
+            )
+        if "민감 정보" in answer or "응답을 제공할 수 없습니다" in answer:
+            raise ReportError(
+                "LLM 생성 실패: 요청 내용이 민감 정보 필터에 걸렸습니다."
+            )
+        logger.info("InHouse LLM 답변 길이: %d chars", len(answer))
+        return answer
+
+    def health_check(self) -> tuple[str, str]:
+        """토큰 발급 + ping 호출로 단계별 검증.
+        반환: ("ok" | "warn" | "err", 메시지)."""
+        # Step 1: 토큰 발급
         try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.post(
-                    self._url,
-                    json=self._payload("ping"),
-                    headers=self._headers(),
-                )
-            logger.info("InHouse health_check ← status=%d", resp.status_code)
-            if resp.status_code < 500:
-                return True, f"서버 응답 확인 (HTTP {resp.status_code})"
-            return False, f"서버 오류 (HTTP {resp.status_code}): {resp.text[:200]}"
-        except httpx.ConnectError as e:
-            return False, f"연결 실패 — URL을 확인하세요: {e}"
-        except httpx.TimeoutException:
-            return False, "응답 시간 초과 (10초)"
+            token = self._get_access_token()
+        except ReportError as e:
+            return "err", (
+                f"❌ **1단계: 토큰 발급 실패** — Client ID/Secret 또는 Auth Endpoint 확인.  \n"
+                f"세부: {str(e).splitlines()[0]}"
+            )
         except Exception as e:
-            return False, f"오류: {e}"
+            return "err", f"❌ **1단계: 토큰 발급 오류** — {e}"
+
+        # Step 2: chat 호출 (ping)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.post(self._chat_endpoint, json=self._payload("ping"), headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as e:
+            return "err", (
+                f"✅ 1단계 토큰 발급 OK  \n"
+                f"❌ **2단계: chat HTTP {e.response.status_code}** — "
+                f"{e.response.text[:200]}"
+            )
+        except httpx.RequestError as e:
+            return "err", (
+                f"✅ 1단계 토큰 발급 OK  \n"
+                f"❌ **2단계: chat endpoint 연결 실패** — {e}"
+            )
+        except Exception as e:
+            return "err", f"✅ 1단계 OK / ❌ **2단계 오류**: {e}"
+
+        answer = _extract_answer(data).strip()
+        if not answer:
+            return "warn", (
+                "✅ **1단계: 토큰 발급 OK**  \n"
+                "⚠️ **2단계: chat 응답 본문이 비어있음**  \n\n"
+                f"전체 응답: `{json.dumps(data, ensure_ascii=False)[:200]}`  \n\n"
+                "**가능성 (확인 순서대로):**  \n"
+                "1. **Client ID 가 가진 권한**으로 호출 가능한 agent 가 아님 → LLM 담당자에게 권한 확인  \n"
+                "2. **Agent ID** 가 등록된 UUID 가 맞는지 확인 (현재: "
+                f"`{self._agent_id or '(미설정 — payload omit)'}`)  \n"
+                "3. **User ID** 가 dify 에 등록된 값인지 확인 (현재: "
+                f"`{self._user}`)  \n"
+            )
+        return "ok", (
+            "✅ **모든 단계 통과**  \n"
+            "1단계 토큰 + 2단계 chat 응답 정상 수신.  \n"
+            f"답변 미리보기: `{answer[:60]}{'…' if len(answer) > 60 else ''}`"
+        )

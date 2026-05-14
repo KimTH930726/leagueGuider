@@ -348,19 +348,61 @@ def render_search(config: AppConfig) -> None:
         st.caption("검색어를 입력하고 검색 버튼을 눌러주세요.")
 
 
+def _meta_status_badge(r: SearchResult) -> tuple[str, str, str]:
+    """문서의 메타 추출 상태 → (라벨, 배경색, tooltip).
+    필드별 상태(요약/기술/분류)를 카운트해 4단계로 분류."""
+    if r.category == "추출불가":
+        return (
+            "🚫 추출불가", "#5e2828",
+            "LLM이 응답을 거부해서 메타 추출 불가. 페이지 본문에 민감 정보가 포함됐을 수 있습니다.",
+        )
+    has_summary = bool((r.one_line_summary or "").strip())
+    has_tech = bool(r.tech_stack)
+    has_real_category = r.category not in (None, "", "기타")
+    filled = int(has_summary) + int(has_tech) + int(has_real_category)
+
+    missing = []
+    if not has_summary:        missing.append("요약")
+    if not has_tech:           missing.append("기술스택")
+    if not has_real_category:  missing.append("카테고리")
+    missing_str = " / ".join(missing) if missing else "없음"
+
+    if filled == 3:
+        return ("✅ LLM 분석", "#1a5e1a", "요약 · 기술스택 · 카테고리 모두 추출됨")
+    if filled >= 1:
+        return (
+            f"📊 부분 {filled}/3", "#3d4f1a",
+            f"누락 필드: {missing_str}  /  데이터 정비 → '미추출·추출불가건 정비' 로 재추출 가능",
+        )
+    return (
+        "⚠️ 미추출", "#5e4e1a",
+        f"메타데이터 비어있음 (누락: {missing_str}). LLM 미설정 상태에서 sync 됐을 가능성. "
+        "데이터 정비 → '미추출·추출불가건 정비' 로 재추출 가능.",
+    )
+
+
 def _render_result_card(r: SearchResult, max_score: float, mode: str) -> None:
     with st.container(border=True):
         title = r.agent_name or r.title
         label_text, label_color = _score_label(r.score, max_score, mode)
+        meta_label, meta_color, meta_tip = _meta_status_badge(r)
 
-        # ── 제목 + 연관성 배지 ──────────────────────────────────────────
-        col_title, col_badge = st.columns([3, 1])
+        # ── 제목 + 메타상태 + 연관성 배지 ───────────────────────────────
+        col_title, col_meta, col_score = st.columns([3, 1, 1])
         with col_title:
             if r.url:
                 st.markdown(f"**[{title}]({r.url})**")
             else:
                 st.markdown(f"**{title}**")
-        with col_badge:
+        with col_meta:
+            st.markdown(
+                f'<div style="text-align:right;margin-top:4px" title="{meta_tip}">'
+                f'<span style="background:{meta_color};color:white;padding:3px 8px;'
+                f'border-radius:10px;font-size:0.72em;font-weight:600">{meta_label}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with col_score:
             st.markdown(
                 f'<div style="text-align:right;margin-top:4px">'
                 f'<span style="background:{label_color};color:white;padding:3px 8px;'
